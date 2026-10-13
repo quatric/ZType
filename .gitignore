@@ -3,3 +3,4 @@ build/
 *.dol
 *.map
 .codesight/
+.DS_Store
