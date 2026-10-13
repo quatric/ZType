@@ -182,7 +182,6 @@ static float volSfx = .5f, volMusic = .5f;
 static int overShown;
 
 /* ---------------- background art ---------------- */
-static uint32_t bgPage[SH][SW];
 static uint32_t nebula[FH][FW];
 static uint32_t gbg[FH][FW];
 static uint32_t tmpField[FH][FW];
@@ -207,7 +206,7 @@ static void makeArt(void) {
 		float dy = y < FY ? FY - y : y > FY + FH ? y - FY - FH : 0;
 		float d = sqrtf(dx * dx + dy * dy);
 		if (d < 30) { float s = 1.f - d / 30.f; float k = 1.f - .55f * s * s; r = (int)(r * k); g = (int)(g * k); b = (int)(b * k); }
-		bgPage[y][x] = RGB(r, g, b);
+		fb[y][x] = RGB(r, g, b);
 	}
 	/* nebula tile (wraps vertically) */
 	for (int o = 0; o < 5; o++) for (int j = 0; j < 34; j++) for (int i = 0; i < 34; i++) lat[o][j][i] = frand();
@@ -254,15 +253,6 @@ static void makeArt(void) {
 		uint32_t n = nebula[y][x];
 		gbg[y][x] = RGB(clampi((int)(r + CR(n) * .22f), 0, 255), clampi((int)(g + CG(n) * .22f), 0, 255), clampi((int)(b + CB(n) * .22f), 0, 255));
 	}
-}
-
-static void drawPageText(void) {
-	static const char *parts[] = {"ZType (c)", " - ", "phoboslab.org", " - ", "feedback", " - ", "soundtrack"};
-	static const uint32_t cols[] = {RGB(95, 95, 90), RGB(95, 95, 90), RGB(150, 150, 144), RGB(95, 95, 90), RGB(150, 150, 144), RGB(95, 95, 90), RGB(150, 150, 144)};
-	float w = 0;
-	for (int i = 0; i < 7; i++) w += text_w(fFoot, parts[i], 0);
-	float x = SW - 6 - w;
-	for (int i = 0; i < 7; i++) { text(fFoot, x, SH - 14, parts[i], cols[i], 255, 0, AL_LEFT); x += text_w(fFoot, parts[i], 0); }
 }
 
 static void blitField(uint32_t (*src)[FW], int scroll) {
@@ -652,7 +642,26 @@ static void updatePlasma(float dt) {
 	}
 }
 
+#ifdef BENCH
+static void benchBot(float dt) {
+	static float t;
+	t += dt;
+	if (menu == MENU_TITLE && !gameTrans && t > 1.f) { t = 0; game_key(K_OK); return; }
+	if (menu == MENU_OVER && t > 3.f) { t = 0; game_key(K_OK); return; }
+	if (mode != MODE_GAME || menu != MENU_NONE || t < .12f) return;
+	t = 0;
+	if (target < 0) {
+		float best = 1e9f; int bi = -1;
+		for (int i = 0; i < MAXE; i++) if (en[i].on && !en[i].dead && en[i].rem == 0 && en[i].y > -20) { float d = dist2player(&en[i]); if (d < best) { best = d; bi = i; } }
+		if (bi >= 0) game_char(en[bi].word[0]);
+	} else game_char(en[target].word[en[target].rem]);
+}
+#endif
+
 void game_update(float dt) {
+#ifdef BENCH
+	benchBot(dt);
+#endif
 	tnow += dt;
 	menuT += dt;
 	if (msgT > 0) msgT -= dt;
@@ -809,9 +818,9 @@ static void drawBooms(void) {
 	for (int i = 0; i < 6; i++) if (boom[i].on) {
 		Boom *b = &boom[i];
 		float alpha = 1.f - b->t, sc = 10.f * b->t;
-		float rad = clampf(sc * 64.f, 4.f, 420.f);
+		float rad = clampf(sc * 64.f, 4.f, 220.f);
 		sglow(b->x, b->y, rad, RGB(255, 140, 50), alpha * .9f);
-		sglow(b->x, b->y, rad * .45f, RGB(255, 240, 210), alpha * .9f);
+		if (rad < 120.f) sglow(b->x, b->y, rad * .45f, RGB(255, 240, 210), alpha * .9f);
 		if (b->glitch && (b->t < .35f)) {
 			for (int k = 0; k < 4; k++) {
 				int gy = FY + irand(FH - 6);
@@ -1069,14 +1078,12 @@ static void drawTitleMenu(float tr) {
 	ring(ix, iy, 9.f, 1.f, RGB(255, 255, 255), ia * .9f);
 	fill_rect((int)ix - 1, (int)iy - 1, 2, 6, RGB(255, 255, 255), (int)(ia * 220));
 	fill_rect((int)ix - 1, (int)iy - 5, 2, 2, RGB(255, 255, 255), (int)(ia * 220));
-	if (msgT > 0) txtc(fSmall, 240, 30, msg, RGB(255, 255, 255), clampf(msgT, 0.f, 1.f) * .8f, AL_CENTER);
+	if (!kbOn) txtc(fTiny, 240, 22, "NO USB KEYBOARD DETECTED", RGB(230, 100, 90), .8f, AL_CENTER);
+	if (msgT > 0) txtc(fSmall, 240, 40, msg, RGB(255, 255, 255), clampf(msgT, 0.f, 1.f) * .8f, AL_CENTER);
 	gfx_noclip();
 }
 
 void game_draw(void) {
-	memcpy(fb, bgPage, sizeof fb);
-	drawPageText();
-	if (!kbOn) text(fFoot, 8, 8, "NO USB KEYBOARD DETECTED", RGB(200, 90, 80), 200, 0, AL_LEFT);
 
 	if (mode == MODE_TITLE && menu == MENU_TITLE) {
 		drawTitleScene(0, 400.f);

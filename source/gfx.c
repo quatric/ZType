@@ -160,7 +160,7 @@ void poly_fill(const float *pts, const int *cnt, int nc, uint32_t c, int a, int 
 /* ---------------- fonts ---------------- */
 typedef struct { uint8_t *bm; int w, h, xo, yo; float adv; } Glyph;
 struct Font { Glyph g[95]; float ascent, height; };
-Font *fWord, *fMenu, *fTitle, *fSmall, *fTiny, *fFoot, *fMenuS;
+Font *fWord, *fMenu, *fTitle, *fSmall, *fTiny, *fMenuS;
 
 static Font *font_new(const unsigned char *ttf, float px) {
 	stbtt_fontinfo info;
@@ -187,7 +187,6 @@ void gfx_init(const unsigned char *light, const unsigned char *regular, const un
 	fTitle = font_new(medium, 17.8f);
 	fSmall = font_new(regular, 10.3f);
 	fTiny = font_new(regular, 8.5f);
-	fFoot = font_new(regular, 9.f);
 }
 
 float text_w(Font *f, const char *s, float sp) {

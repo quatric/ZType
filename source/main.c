@@ -5,6 +5,7 @@
 #include <fat.h>
 #include <ogc/lwp_watchdog.h>
 #include <string.h>
+#include <stdio.h>
 #include "gfx.h"
 #include "game.h"
 #include "sound.h"
@@ -16,6 +17,9 @@ static void *xfb[2];
 static int fbi = 0;
 static GXRModeObj *rmode;
 static u32 yuvrow[SW / 2];
+#ifdef FPS_DEBUG
+static u64 frame_t0, work_us;
+#endif
 
 static inline u32 yuvpair(u32 a, u32 b) {
 	int r0 = (a >> 16) & 255, g0 = (a >> 8) & 255, b0 = a & 255;
@@ -28,20 +32,25 @@ static inline u32 yuvpair(u32 a, u32 b) {
 	return (y0 << 24) | (cb << 16) | (y1 << 8) | cr;
 }
 
-static void present(void) {
+/* The page around the playfield never changes, so after the first full pass only the
+ * playfield columns are converted and written to the framebuffer. */
+static void present(int full) {
 	int H2 = rmode->xfbHeight, W2 = rmode->fbWidth / 2;
+	int px0 = full ? 0 : FX / 2, px1 = full ? SW / 2 : (FX + FW) / 2;
 	u32 *dst = xfb[fbi];
 	for (int y = 0, last = -1; y < H2; y++) {
 		int sy = y * SH / H2;
+		if (!full && (sy < FY || sy >= FY + FH)) continue;
 		if (sy != last) {
 			last = sy;
 			const u32 *src = fb[sy];
-			for (int x = 0; x < SW / 2; x++) yuvrow[x] = yuvpair(src[x * 2], src[x * 2 + 1]);
+			for (int x = px0; x < px1; x++) yuvrow[x] = yuvpair(src[x * 2], src[x * 2 + 1]);
 		}
-		u32 *row = dst + y * W2;
-		if (W2 == SW / 2) memcpy(row, yuvrow, W2 * 4);
-		else for (int x = 0; x < W2; x++) row[x] = yuvrow[x * (SW / 2) / W2];
+		memcpy(dst + y * W2 + px0, yuvrow + px0, (px1 - px0) * 4);
 	}
+#ifdef FPS_DEBUG
+	work_us = ticks_to_microsecs(gettime() - frame_t0);
+#endif
 	VIDEO_SetNextFramebuffer(dst);
 	VIDEO_Flush();
 	VIDEO_WaitVSync();
@@ -68,6 +77,10 @@ int main(void) {
 
 	gfx_init(Roboto_Light_ttf, Roboto_Regular_ttf, Roboto_Medium_ttf);
 	game_init(sdOK);
+	game_draw();
+	present(1);
+	game_draw();
+	present(1);
 
 	u64 last = gettime();
 	int kbOn = 0;
@@ -109,9 +122,19 @@ int main(void) {
 		last = now;
 		if (dt > .05f) dt = .05f;
 		if (dt < .001f) dt = .001f;
+#ifdef FPS_DEBUG
+		frame_t0 = now;
+#endif
 		game_update(dt);
 		game_draw();
-		present();
+#ifdef FPS_DEBUG
+		{
+			char b[48];
+			snprintf(b, sizeof b, "work %u.%ums  frame %ums", (unsigned)(work_us / 1000), (unsigned)(work_us % 1000 / 100), (unsigned)(dt * 1000.f + .5f));
+			text(fSmall, FX + 6, FY + 6, b, 0xFFFF00, 255, 0, AL_LEFT);
+		}
+#endif
+		present(0);
 	}
 	KEYBOARD_Deinit();
 	return 0;

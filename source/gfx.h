@@ -18,7 +18,7 @@
 extern uint32_t fb[SH][SW];
 
 typedef struct Font Font;
-extern Font *fWord, *fMenu, *fTitle, *fSmall, *fTiny, *fFoot, *fMenuS;
+extern Font *fWord, *fMenu, *fTitle, *fSmall, *fTiny, *fMenuS;
 enum { AL_LEFT = 0, AL_CENTER = 1, AL_RIGHT = 2 };
 
 void gfx_init(const unsigned char *light, const unsigned char *regular, const unsigned char *medium);
