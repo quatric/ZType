@@ -3,6 +3,9 @@ build/
 *.dol
 *.map
 .codesight/
-.DS_Store
-data/*.ttf
+zty_assets/
+ztype_web.js
+software/data/*.ttf
 apps/typeshot/music/
+build*/
+.DS_Store

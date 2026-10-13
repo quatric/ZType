@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <app version="1">
-  <name>TypeShot</name>
-  <version>1.0</version>
+  <name>ZType</name>
+  <version>1.1</version>
   <release_date>20261013</release_date>
-  <short_description>Type to shoot - USB keyboard typing shooter</short_description>
-  <long_description>Type the words falling from space to shoot them down. Requires a USB keyboard.</long_description>
+  <short_description>ZType typing shooter for Wii</short_description>
+  <long_description>A Wii port of ZType with USB keyboard support. Type falling words to shoot them down with plasma cannons and EMP shockwaves.</long_description>
 </app>

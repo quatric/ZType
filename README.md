@@ -1,19 +1,67 @@
-# ZType for Wii
+# ZType (Wii)
 
-A ZType-style typing shooter for Wii with USB keyboard support, laid out and styled after
-[zty.pe](https://zty.pe/) (ZType by PhobosLab): portrait 2:3 playfield on the dark diamond page,
-starfield title screen with the big ZTYPE logo, grid-lit space background, word labels next to
-each ship, wave-clear banner, EMP, game-over stats and the settings/pause menu.
-Gameplay rules (waves, enemy types, scoring, streak multiplier, 3 EMPs) follow the original.
-Graphics and sound effects are generated in code (no copied assets).
-- Fonts: run `tools/install_avenir.sh` (macOS) to build with Avenir like the original; the licensed font stays out of git, and without it the build falls back to Roboto (Apache 2.0) from `fonts/`
-- Music: put the soundtrack `.ogg` files (`endure.ogg`, `orientation.ogg`) in `sd:/apps/typeshot/music/`; they stream during a game. Without them a synthesized loop plays
+A port of Dominic Szablewski's [ZType](https://zty.pe/) typing shooter for Nintendo Wii with USB keyboard support. Built with hardware-accelerated GX rendering at 640x480 @ 60 FPS.
 
-- Build: `make` (devkitPPC + libogc + libwiikeyboard)
-- Install: copy `apps/typeshot/` to `SD:/apps/` and launch from the Homebrew Channel, or `wiiload zType-wii.dol`
-- Keyboard: type letters to lock on and shoot; Enter = EMP (or select); Backspace = cancel target; Esc = pause/settings; arrows = menus; `I` on the title = credits
-- Wiimote: D-pad = menus, A = select / EMP, + = pause, 1 = cancel target, 2 = credits, HOME = exit
-- Title menu: new game, settings (sound/music volume), my stats, load your own text
-- Own text: put `text.txt` in `sd:/apps/typeshot/` and pick "load your own text" to use its words
-- Scores and stats are saved to `sd:/apps/typeshot/highscore.dat`
-- CI: GitHub Actions builds the .dol on every push (see `.github/workflows/build.yml`)
+## Features
+
+- **Authentic ZType Visuals**:
+  - Parallax scrolling starfield and deep atmospheric space gradient
+  - Glowing cyber grid that flashes upon enemy destruction
+  - Authentic ship designs: Player fighter, Missiles, rotating Mines, armored Destroyers, and massive Oppressor dreadnoughts
+  - Smooth vector typography using ZType's authentic Avenir fonts (untyped letters in crisp white, typed letters in vibrant orange)
+  - Zooming circular targeting lock-on reticle with laser targeting beam
+  - Radiant cyan plasma bolts, animated multi-frame explosions, and neon spark particles
+  - Authentic top HUD: streak multiplier bar with x2/x3 indicators, EMP stock counters, shield integrity, and wave clear banners
+  - Authentic title screen with the iconic ZType logo, hovering ship, and pulsing thruster flames
+  - Detailed Game Over statistics screen (Score, Wave, Words, Accuracy %, WPM, Longest Streak, High Score)
+- **Authentic Audio**:
+  - Sound effects from ZType (plasma shots, hits, misses, reticle target lock, small/medium/large explosions, EMP blast, wave spawn, streak multipliers)
+  - Looping electronic soundtrack with mute toggle
+- **Hardware-Accelerated GX Renderer**:
+  - Native 640x480 resolution at a locked 60 FPS
+  - Hardware bilinear texture filtering, alpha blending, and additive blending for brilliant neon glows
+- **Controls**:
+  - **USB Keyboard**:
+    - `A` - `Z`: Type letters to lock onto targets and shoot
+    - `Space` / `Enter`: Activate EMP shockwave (in game) / Start & retry (menus)
+    - `Escape`: Pause / Resume
+    - `Tab`: Toggle sound mute
+  - **Wii Remote**:
+    - `A`: Start game / confirm
+    - `B`: Activate EMP
+    - `+`: Pause / Resume
+    - `-`: Toggle sound mute
+    - `HOME`: Exit to Homebrew Channel
+- **Persistence**: High score automatically saved to SD card (`sd:/apps/typeshot/highscore.dat`)
+- **Homebrew Channel Ready**: App bundle in `apps/typeshot/` with custom `icon.png` and `meta.xml`
+
+## Building
+
+Requires devkitPPC and libogc:
+
+```bash
+make
+```
+
+Output binary: `ztype-wii.dol` (also copied to `apps/typeshot/boot.dol`).
+
+## Installation
+
+1. Copy the `apps/typeshot/` folder to the `apps/` directory on your SD card or USB drive (`SD:/apps/typeshot/`).
+2. Launch from the Homebrew Channel.
+3. Plug a standard USB keyboard into one of the Wii's rear USB ports.
+
+
+## Software-renderer engine (`software/`)
+
+A second, clean-room engine that draws everything in code (no extracted assets) into a 640x480 framebuffer:
+portrait 2:3 playfield, Avenir/Roboto text via stb_truetype, generated art and sound effects.
+
+```bash
+make ENGINE=soft        # builds zType-wii-soft.dol (objects in build-soft/)
+tools/install_avenir.sh # optional, macOS: use Avenir like the original (licensed, kept out of git; Roboto otherwise)
+```
+
+- Music: put `endure.ogg` / `orientation.ogg` in `sd:/apps/typeshot/music/`; they stream during a game (synth loop if absent)
+- Own text: put `text.txt` in `sd:/apps/typeshot/` and pick "load your own text"
+- Keyboard: Enter = EMP/select, Backspace = cancel target, Esc = pause, arrows = menus, `I` on the title = credits

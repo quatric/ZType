@@ -16,9 +16,10 @@ jobs:
       - name: Package for Homebrew Channel
         run: |
           mkdir -p dist/apps/typeshot
-          cp zType-wii.dol dist/apps/typeshot/boot.dol
+          cp *.dol dist/apps/typeshot/boot.dol
           cp apps/typeshot/meta.xml dist/apps/typeshot/
+          cp apps/typeshot/icon.png dist/apps/typeshot/
       - uses: actions/upload-artifact@v4
-        with:
+      - with:
           name: typeshot-wii
           path: dist/

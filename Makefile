@@ -15,10 +15,20 @@ include $(DEVKITPPC)/wii_rules
 # SOURCES is a list of directories containing source code
 # INCLUDES is a list of directories containing extra header files
 #---------------------------------------------------------------------------------
+# ENGINE=gx   (default) hardware GX renderer with the extracted ZType assets (source/, data/)
+# ENGINE=soft software renderer, everything generated in code (software/)
+ENGINE		?=	gx
+ifeq ($(ENGINE),soft)
+TARGET		:=	$(notdir $(CURDIR))-soft
+BUILD		:=	build-soft
+SOURCES		:=	software/source
+DATA		:=	software/data
+else
 TARGET		:=	$(notdir $(CURDIR))
 BUILD		:=	build
 SOURCES		:=	source
 DATA		:=	data
+endif
 INCLUDES	:=
 
 #---------------------------------------------------------------------------------
@@ -33,7 +43,10 @@ LDFLAGS	=	-g $(MACHDEP) -Wl,-Map,$(notdir $@).map
 #---------------------------------------------------------------------------------
 # any extra libraries we wish to link with the project
 #---------------------------------------------------------------------------------
+LIBS	:=	-lfat -lwiikeyboard -lwiiuse -lbte -lasnd -logc -lm
+ifeq ($(ENGINE),soft)
 LIBS	:=	-lfat -lwiikeyboard -lwiiuse -lbte -lasnd -logc -lvorbisidec -logg -lm
+endif
 
 #---------------------------------------------------------------------------------
 # list of directories containing libraries, this must be the top level containing
@@ -50,9 +63,11 @@ ifneq ($(BUILD),$(notdir $(CURDIR)))
 
 export OUTPUT	:=	$(CURDIR)/$(TARGET)
 
-# UI fonts: tools/install_avenir.sh installs Avenir; otherwise fall back to Roboto
-ifeq ($(wildcard $(CURDIR)/data/ui_font.ttf),)
-$(shell mkdir -p $(CURDIR)/data && cp $(CURDIR)/fonts/Roboto_Light.ttf $(CURDIR)/data/ui_font.ttf && cp $(CURDIR)/fonts/Roboto_Regular.ttf $(CURDIR)/data/word_font.ttf)
+# software engine UI fonts: tools/install_avenir.sh installs Avenir; otherwise fall back to Roboto
+ifeq ($(ENGINE),soft)
+ifeq ($(wildcard $(CURDIR)/software/data/ui_font.ttf),)
+$(shell mkdir -p $(CURDIR)/software/data && cp $(CURDIR)/software/fonts/Roboto_Light.ttf $(CURDIR)/software/data/ui_font.ttf && cp $(CURDIR)/software/fonts/Roboto_Regular.ttf $(CURDIR)/software/data/word_font.ttf)
+endif
 endif
 
 export VPATH	:=	$(foreach dir,$(SOURCES),$(CURDIR)/$(dir)) \
@@ -129,9 +144,9 @@ $(OUTPUT).elf: $(OFILES)
 $(OFILES_SOURCES) : $(HFILES)
 
 #---------------------------------------------------------------------------------
-# This rule links in binary data with the .jpg extension
+# This rule links in binary data with the .bin extension
 #---------------------------------------------------------------------------------
-%.jpg.o	%_jpg.h :	%.jpg
+%.bin.o	%_bin.h :	%.bin
 #---------------------------------------------------------------------------------
 	@echo $(notdir $<)
 	$(bin2o)
