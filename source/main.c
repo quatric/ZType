@@ -1,5 +1,7 @@
-/* TypeShot Wii - a typing shooter for Wii with USB keyboard support.
- * Original game inspired by the "type to shoot" genre. Software renderer. */
+/*
+ * TypeShot Wii - ZType typing shooter for Nintendo Wii
+ * Renders with hardware-accelerated GX at 640x480 60fps.
+ */
 #include <gccore.h>
 #include <wiiuse/wpad.h>
 #include <wiikeyboard/keyboard.h>
@@ -8,409 +10,1178 @@
 #include <string.h>
 #include <fat.h>
 #include <sys/stat.h>
-#include "sound.h"
 #include <math.h>
 
-#define W 320
-#define H 240
-
-static u32 fb[H][W];
-static u32 yuvrow[W];
-static void *xfb[2];
-static int fbi = 0;
-static GXRModeObj *rmode;
-
-/* ---------------- font (5x7) ---------------- */
-static const char FCH[] = " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789:-.%/!>?'";
-static const u8 FD[][7] = {
- {0,0,0,0,0,0,0},
- {0x0E,0x11,0x11,0x1F,0x11,0x11,0x11},{0x1E,0x11,0x11,0x1E,0x11,0x11,0x1E},
- {0x0E,0x11,0x10,0x10,0x10,0x11,0x0E},{0x1E,0x11,0x11,0x11,0x11,0x11,0x1E},
- {0x1F,0x10,0x10,0x1E,0x10,0x10,0x1F},{0x1F,0x10,0x10,0x1E,0x10,0x10,0x10},
- {0x0E,0x11,0x10,0x17,0x11,0x11,0x0F},{0x11,0x11,0x11,0x1F,0x11,0x11,0x11},
- {0x0E,0x04,0x04,0x04,0x04,0x04,0x0E},{0x07,0x02,0x02,0x02,0x02,0x12,0x0C},
- {0x11,0x12,0x14,0x18,0x14,0x12,0x11},{0x10,0x10,0x10,0x10,0x10,0x10,0x1F},
- {0x11,0x1B,0x15,0x15,0x11,0x11,0x11},{0x11,0x11,0x19,0x15,0x13,0x11,0x11},
- {0x0E,0x11,0x11,0x11,0x11,0x11,0x0E},{0x1E,0x11,0x11,0x1E,0x10,0x10,0x10},
- {0x0E,0x11,0x11,0x11,0x15,0x12,0x0D},{0x1E,0x11,0x11,0x1E,0x14,0x12,0x11},
- {0x0F,0x10,0x10,0x0E,0x01,0x01,0x1E},{0x1F,0x04,0x04,0x04,0x04,0x04,0x04},
- {0x11,0x11,0x11,0x11,0x11,0x11,0x0E},{0x11,0x11,0x11,0x11,0x11,0x0A,0x04},
- {0x11,0x11,0x11,0x15,0x15,0x15,0x0A},{0x11,0x11,0x0A,0x04,0x0A,0x11,0x11},
- {0x11,0x11,0x0A,0x04,0x04,0x04,0x04},{0x1F,0x01,0x02,0x04,0x08,0x10,0x1F},
- {0x0E,0x11,0x13,0x15,0x19,0x11,0x0E},{0x04,0x0C,0x04,0x04,0x04,0x04,0x0E},
- {0x0E,0x11,0x01,0x02,0x04,0x08,0x1F},{0x1F,0x02,0x04,0x02,0x01,0x11,0x0E},
- {0x02,0x06,0x0A,0x12,0x1F,0x02,0x02},{0x1F,0x10,0x1E,0x01,0x01,0x11,0x0E},
- {0x06,0x08,0x10,0x1E,0x11,0x11,0x0E},{0x1F,0x01,0x02,0x04,0x08,0x08,0x08},
- {0x0E,0x11,0x11,0x0E,0x11,0x11,0x0E},{0x0E,0x11,0x11,0x0F,0x01,0x02,0x0C},
- {0x00,0x04,0x00,0x00,0x04,0x00,0x00},{0x00,0x00,0x00,0x1F,0x00,0x00,0x00},
- {0x00,0x00,0x00,0x00,0x00,0x0C,0x0C},{0x18,0x19,0x02,0x04,0x08,0x13,0x03},
- {0x01,0x02,0x02,0x04,0x08,0x08,0x10},{0x04,0x04,0x04,0x04,0x04,0x00,0x04},
- {0x10,0x08,0x04,0x02,0x04,0x08,0x10},{0x0E,0x11,0x01,0x02,0x04,0x00,0x04},
- {0x04,0x04,0x08,0x00,0x00,0x00,0x00},
-};
-
-#define RGB(r,g,b) (((r)<<16)|((g)<<8)|(b))
-
-static inline void px(int x, int y, u32 c) {
-	if ((unsigned)x < W && (unsigned)y < H) fb[y][x] = c;
-}
-static void rect(int x, int y, int w, int h, u32 c) {
-	for (int j = y; j < y + h; j++) for (int i = x; i < x + w; i++) px(i, j, c);
-}
-static void line(int x0, int y0, int x1, int y1, u32 c) {
-	int dx = abs(x1 - x0), sx = x0 < x1 ? 1 : -1;
-	int dy = -abs(y1 - y0), sy = y0 < y1 ? 1 : -1, err = dx + dy;
-	for (;;) {
-		px(x0, y0, c);
-		if (x0 == x1 && y0 == y1) break;
-		int e2 = 2 * err;
-		if (e2 >= dy) { err += dy; x0 += sx; }
-		if (e2 <= dx) { err += dx; y0 += sy; }
-	}
-}
-static void glyph(int x, int y, char ch, int s, u32 c) {
-	if (ch >= 'a' && ch <= 'z') ch -= 32;
-	const char *p = strchr(FCH, ch);
-	if (!p || !ch) return;
-	const u8 *g = FD[p - FCH];
-	for (int r = 0; r < 7; r++)
-		for (int b = 0; b < 5; b++)
-			if (g[r] & (0x10 >> b)) rect(x + b * s, y + r * s, s, s, c);
-}
-static void text(int x, int y, const char *t, int s, u32 c) {
-	for (; *t; t++, x += 6 * s) glyph(x, y, *t, s, c);
-}
-static void textc(int cx, int y, const char *t, int s, u32 c) {
-	text(cx - (int)strlen(t) * 3 * s, y, t, s, c);
-}
+#include "gx_render.h"
+#include "assets.h"
+#include "words.h"
+#include "sound.h"
 
 /* ---------------- high score (SD card) ---------------- */
 #define HS_DIR "sd:/apps/typeshot"
 #define HS_FILE HS_DIR "/highscore.dat"
-static int sdOK, hiscore;
+static int sdOK = 0;
+static int hiscore = 0;
 
 static unsigned hsSum(unsigned v) { return (v * 2654435761u) ^ 0x5459u; }
 static void hsLoad(void) {
-	if (!sdOK) return;
-	FILE *f = fopen(HS_FILE, "r");
-	if (!f) return;
-	unsigned v, c;
-	if (fscanf(f, "TSHOT1 %u %u", &v, &c) == 2 && c == hsSum(v)) hiscore = (int)v;
-	fclose(f);
+    if (!sdOK) return;
+    FILE *f = fopen(HS_FILE, "r");
+    if (!f) return;
+    unsigned v, c;
+    if (fscanf(f, "TSHOT1 %u %u", &v, &c) == 2 && c == hsSum(v)) hiscore = (int)v;
+    fclose(f);
 }
 static void hsSave(void) {
-	if (!sdOK) return;
-	mkdir("sd:/apps", 0777);
-	mkdir(HS_DIR, 0777);
-	FILE *f = fopen(HS_FILE, "w");
-	if (!f) return;
-	fprintf(f, "TSHOT1 %u %u\n", (unsigned)hiscore, hsSum((unsigned)hiscore));
-	fclose(f);
+    if (!sdOK) return;
+    mkdir("sd:/apps", 0777);
+    mkdir(HS_DIR, 0777);
+    FILE *f = fopen(HS_FILE, "w");
+    if (!f) return;
+    fprintf(f, "TSHOT1 %u %u\n", (unsigned)hiscore, hsSum((unsigned)hiscore));
+    fclose(f);
 }
 
-/* ---------------- words ---------------- */
-static const char *WORDS[] = {
- "go","up","ion","orb","ray","gas","jet","sun","fly","hit","arc","fox","zap","hex","bit",
- "star","moon","nova","dust","beam","warp","void","core","comet","laser","orbit","pulse","probe",
- "flare","rocket","shield","plasma","galaxy","engine","thrust","cosmos","cannon","fusion",
- "meteor","photon","quasar","vector","signal","cluster","reactor","gravity","phantom","station",
- "capsule","eclipse","nebulae","asteroid","starship","universe","blaster","hyperdrive",
- "telescope","satellite","supernova","spacewalk","wormhole","antimatter","constellation",
- "interstellar","extraterrestrial", 0
+/* ---------------- game constants & types ---------------- */
+#define MAX_ENEMIES 24
+#define MAX_BULLETS 48
+#define MAX_SPARKS  256
+#define MAX_EXPLOSIONS 16
+#define MAX_ENEMY_BULLETS 32
+
+enum {
+    ENEMY_MISSLE = 0,
+    ENEMY_MINE,
+    ENEMY_DESTROYER,
+    ENEMY_OPPRESSOR
 };
-static int nwords;
 
-/* ---------------- game state ---------------- */
-#define MAXE 24
-#define MAXB 48
-#define MAXP 256
+typedef struct {
+    int active;
+    int type;
+    char word[24];
+    int len;
+    int typed;
+    int inflight;
+    int dying;
+    float x, y;
+    float vx, vy;
+    float angle;
+    float spin;
+    float shootTimer;
+    int shootCount;
+} Enemy;
 
-typedef struct { int on; char w[20]; int len, typed, inflight, dying; float x, y, vy, ph; int kind; } Enemy;
-typedef struct { int on; float x, y; int e; } Bullet;
-typedef struct { int on; float x, y, vx, vy, life; u32 c; } Part;
-typedef struct { float x, y, v; u32 c; } Star;
+typedef struct {
+    int active;
+    float x, y;
+    int target_enemy;
+    float angle;
+} Plasma;
 
-static Enemy en[MAXE];
-static Bullet bu[MAXB];
-static Part pa[MAXP];
-static Star st[90];
+typedef struct {
+    int active;
+    float x, y;
+    float vx, vy;
+    float life, maxLife;
+    u32 color;
+} Spark;
 
-enum { S_TITLE, S_PLAY, S_PAUSE, S_OVER };
-static int state = S_TITLE;
-static int level, spawned, toSpawn, target, score, combo, bestCombo, shield;
-static int keysHit, keysMiss, kills, frames, spawnT, bannerT;
-static int shake, kbOn, newHi;
-static unsigned rng = 12345;
-static int rnd(int n) { rng = rng * 1103515245 + 12345; return (int)((rng >> 16) % (unsigned)n); }
+typedef struct {
+    int active;
+    float x, y;
+    float frame;
+    float scale;
+} Explosion;
 
-static void burst(float x, float y, int n, u32 c, float sp) {
-	for (int i = 0; i < n; i++)
-		for (int k = 0; k < MAXP; k++) if (!pa[k].on) {
-			float a = rnd(628) / 100.f, v = (0.3f + rnd(100) / 100.f) * sp;
-			pa[k] = (Part){1, x, y, cosf(a) * v, sinf(a) * v, 20 + rnd(25), c};
-			break;
-		}
+typedef struct {
+    int active;
+    float x, y;
+    float vx, vy;
+} EnemyBullet;
+
+typedef struct {
+    int active;
+    float x, y;
+    float radius;
+    float maxRadius;
+    float alpha;
+} EMPWave;
+
+enum {
+    STATE_TITLE,
+    STATE_PLAY,
+    STATE_PAUSE,
+    STATE_OVER
+};
+
+static int state = STATE_TITLE;
+static int wave = 1;
+static int score = 0;
+static int streak = 0;
+static int bestStreak = 0;
+static int multiplier = 1;
+static int emps = 3;
+static int shield = 100;
+static int keysHit = 0;
+static int keysMiss = 0;
+static int wordsKilled = 0;
+static int frameCount = 0;
+static int targetIndex = -1;
+static float reticleTime = 0.0f;
+
+static float player_x = 320.0f;
+static float player_y = 430.0f;
+static float player_angle = 0.0f;
+static float player_target_angle = 0.0f;
+static int player_anim_frame = 0;
+static int player_anim_timer = 0;
+
+static float bg_stars_scroll = 0.0f;
+static float bg_grid_flash = 0.1f;
+static int screen_shake = 0;
+static int waveClearTimer = 0;
+static int newHighScore = 0;
+static int kbConnected = 1;
+
+static Enemy enemies[MAX_ENEMIES];
+static Plasma plasmas[MAX_BULLETS];
+static Spark sparks[MAX_SPARKS];
+static Explosion explosions[MAX_EXPLOSIONS];
+static EnemyBullet enemyBullets[MAX_ENEMY_BULLETS];
+static EMPWave empWave;
+
+static int waveToSpawn = 0;
+static int waveSpawned = 0;
+static int waveSpawnWait = 0;
+
+static unsigned rng_seed = 123456789;
+static int rnd(int max) {
+    if (max <= 0) return 0;
+    rng_seed = rng_seed * 1103515245 + 12345;
+    return (int)((rng_seed >> 16) % (unsigned)max);
+}
+static float rnd_range(float min, float max) {
+    return min + (rnd(10000) / 10000.0f) * (max - min);
 }
 
-static void startLevel(int l) {
-	level = l; spawned = 0; toSpawn = 5 + l * 2; spawnT = 30; bannerT = 100; target = -1;
-	memset(bu, 0, sizeof bu);
+/* ---------------- particle & effect helpers ---------------- */
+static void spawnSparks(float x, float y, int count, u32 color, float speed) {
+    for (int i = 0; i < count; i++) {
+        for (int k = 0; k < MAX_SPARKS; k++) {
+            if (!sparks[k].active) {
+                float a = rnd_range(0.0f, 6.283185f);
+                float sp = rnd_range(speed * 0.4f, speed * 1.5f);
+                sparks[k].active = 1;
+                sparks[k].x = x;
+                sparks[k].y = y;
+                sparks[k].vx = cosf(a) * sp;
+                sparks[k].vy = sinf(a) * sp;
+                sparks[k].life = sparks[k].maxLife = rnd_range(15.0f, 30.0f);
+                sparks[k].color = color;
+                break;
+            }
+        }
+    }
 }
+
+static void spawnExplosion(float x, float y, float scale) {
+    for (int i = 0; i < MAX_EXPLOSIONS; i++) {
+        if (!explosions[i].active) {
+            explosions[i].active = 1;
+            explosions[i].x = x;
+            explosions[i].y = y;
+            explosions[i].frame = 0.0f;
+            explosions[i].scale = scale;
+            break;
+        }
+    }
+}
+
+static void triggerScreenShake(int amount) {
+    if (amount > screen_shake) screen_shake = amount;
+}
+
+static void triggerGridFlash(void) {
+    bg_grid_flash = 1.0f;
+}
+
+static void triggerEMP(void) {
+    if (emps <= 0) return;
+    emps--;
+    sound_play(SFX_EMP);
+    triggerScreenShake(20);
+
+    empWave.active = 1;
+    empWave.x = player_x;
+    empWave.y = player_y;
+    empWave.radius = 10.0f;
+    empWave.maxRadius = 500.0f;
+    empWave.alpha = 1.0f;
+
+    // Clear all enemy bullets
+    for (int i = 0; i < MAX_ENEMY_BULLETS; i++) {
+        if (enemyBullets[i].active) {
+            spawnSparks(enemyBullets[i].x, enemyBullets[i].y, 4, 0xFFCC44FF, 2.0f);
+            enemyBullets[i].active = 0;
+        }
+    }
+
+    // Damage / destroy enemies
+    for (int i = 0; i < MAX_ENEMIES; i++) {
+        if (enemies[i].active && !enemies[i].dying) {
+            spawnSparks(enemies[i].x, enemies[i].y, 10, 0x4DFED2FF, 3.0f);
+            if (enemies[i].type == ENEMY_MINE || enemies[i].type == ENEMY_MISSLE) {
+                enemies[i].dying = 1;
+                enemies[i].typed = enemies[i].len;
+            } else {
+                // Remove up to 3 typed letters
+                enemies[i].typed += 3;
+                if (enemies[i].typed >= enemies[i].len) {
+                    enemies[i].dying = 1;
+                    enemies[i].typed = enemies[i].len;
+                }
+            }
+            if (enemies[i].dying) {
+                spawnExplosion(enemies[i].x, enemies[i].y, 1.2f);
+                score += enemies[i].len * 15 * multiplier;
+                wordsKilled++;
+                triggerGridFlash();
+                enemies[i].active = 0;
+                if (targetIndex == i) targetIndex = -1;
+            }
+        }
+    }
+}
+
+/* ---------------- wave management ---------------- */
+static int isFirstLetterUsed(char c) {
+    for (int i = 0; i < MAX_ENEMIES; i++) {
+        if (enemies[i].active && !enemies[i].dying) {
+            if (enemies[i].word[0] == c) return 1;
+        }
+    }
+    return 0;
+}
+
+static const char *pickWord(int minLen, int maxLen) {
+    if (minLen < 2) minLen = 2;
+    if (maxLen > 12) maxLen = 12;
+
+    for (int tries = 0; tries < 100; tries++) {
+        int l = minLen + rnd(maxLen - minLen + 1);
+        int count = WORDS_COUNT_BY_LEN[l];
+        if (count > 0) {
+            const char *w = WORDS_BY_LEN[l][rnd(count)];
+            if (!isFirstLetterUsed(w[0]) || tries > 60) {
+                return w;
+            }
+        }
+    }
+    return "ztype";
+}
+
+static void spawnEnemy(int type) {
+    for (int i = 0; i < MAX_ENEMIES; i++) {
+        if (!enemies[i].active) {
+            Enemy *e = &enemies[i];
+            memset(e, 0, sizeof(Enemy));
+            e->active = 1;
+            e->type = type;
+
+            int minL = 3, maxL = 5;
+            float speed = 0.5f;
+
+            if (type == ENEMY_MISSLE) {
+                minL = 2; maxL = 4; speed = 0.85f;
+            } else if (type == ENEMY_MINE) {
+                minL = 3; maxL = 6; speed = 0.55f;
+            } else if (type == ENEMY_DESTROYER) {
+                minL = 7; maxL = 10; speed = 0.35f;
+            } else if (type == ENEMY_OPPRESSOR) {
+                minL = 9; maxL = 12; speed = 0.22f;
+            }
+
+            // Speed factor increases with wave
+            speed *= (1.0f + wave * 0.035f);
+
+            const char *w = pickWord(minL, maxL);
+            strncpy(e->word, w, sizeof(e->word) - 1);
+            e->len = strlen(e->word);
+
+            int wordPixelW = gx_text_width_enemy(e->word);
+            int margin = wordPixelW / 2 + 30;
+            e->x = margin + rnd(SCREEN_W - margin * 2);
+            e->y = -40.0f - rnd(30);
+            e->vy = speed;
+            e->vx = rnd_range(-0.1f, 0.1f);
+            e->angle = 0.0f;
+            e->shootTimer = rnd_range(120.0f, 240.0f);
+            e->shootCount = 0;
+
+            waveSpawned++;
+            return;
+        }
+    }
+}
+
+static void startWave(int w) {
+    wave = w;
+    waveSpawned = 0;
+    waveToSpawn = 5 + w * 2;
+    waveSpawnWait = 40;
+    waveClearTimer = 0;
+    targetIndex = -1;
+    sound_play(SFX_SPAWN);
+}
+
 static void newGame(void) {
-	memset(en, 0, sizeof en); memset(bu, 0, sizeof bu); memset(pa, 0, sizeof pa);
-	score = combo = bestCombo = keysHit = keysMiss = kills = frames = 0; shield = 100;
-	startLevel(1); state = S_PLAY;
+    memset(enemies, 0, sizeof(enemies));
+    memset(plasmas, 0, sizeof(plasmas));
+    memset(sparks, 0, sizeof(sparks));
+    memset(explosions, 0, sizeof(explosions));
+    memset(enemyBullets, 0, sizeof(enemyBullets));
+    memset(&empWave, 0, sizeof(empWave));
+
+    score = 0;
+    streak = 0;
+    bestStreak = 0;
+    multiplier = 1;
+    emps = 3;
+    shield = 100;
+    keysHit = 0;
+    keysMiss = 0;
+    wordsKilled = 0;
+    frameCount = 0;
+    targetIndex = -1;
+    reticleTime = 0.0f;
+    newHighScore = 0;
+
+    player_x = 320.0f;
+    player_y = 430.0f;
+    player_angle = 0.0f;
+    player_target_angle = 0.0f;
+
+    startWave(1);
+    state = STATE_PLAY;
 }
-static int usedFirst(char c) {
-	for (int i = 0; i < MAXE; i++) if (en[i].on && !en[i].dying && en[i].w[0] == c) return 1;
-	return 0;
+
+/* ---------------- shooting & input ---------------- */
+static void shootPlasma(int enemyIdx) {
+    for (int i = 0; i < MAX_BULLETS; i++) {
+        if (!plasmas[i].active) {
+            plasmas[i].active = 1;
+            plasmas[i].x = player_x;
+            plasmas[i].y = player_y - 12.0f;
+            plasmas[i].target_enemy = enemyIdx;
+            enemies[enemyIdx].inflight++;
+
+            float dx = enemies[enemyIdx].x - player_x;
+            float dy = enemies[enemyIdx].y - player_y;
+            plasmas[i].angle = atan2f(dy, dx) + 1.570796f;
+
+            sound_play(SFX_PLASMA);
+            player_anim_frame = 3;
+            player_anim_timer = 4;
+            return;
+        }
+    }
 }
-static void spawnEnemy(void) {
-	for (int i = 0; i < MAXE; i++) if (!en[i].on) {
-		int minl = 2 + level / 2, maxl = 4 + level;
-		if (maxl > 16) maxl = 16;
-		const char *w; int tries = 0;
-		do {
-			w = WORDS[rnd(nwords)];
-			tries++;
-		} while ((((int)strlen(w) < minl || (int)strlen(w) > maxl) || (usedFirst(w[0]) && tries < 60)) && tries < 200);
-		Enemy *e = &en[i];
-		memset(e, 0, sizeof *e);
-		e->on = 1; strcpy(e->w, w); e->len = strlen(w);
-		int ww = e->len * 12;
-		e->x = 8 + ww / 2 + rnd(W - 16 - ww); e->y = -20;
-		e->vy = 0.22f + level * 0.035f + rnd(10) / 100.f; e->ph = rnd(628) / 100.f; e->kind = rnd(3);
-		spawned++;
-		return;
-	}
+
+static void handleKey(char c) {
+    if (state != STATE_PLAY) return;
+    if (c >= 'A' && c <= 'Z') c += 32;
+    if (c < 'a' || c > 'z') return;
+
+    // If no target is locked, acquire lowest enemy starting with this letter
+    if (targetIndex < 0) {
+        float lowest_y = -9999.0f;
+        int best = -1;
+        for (int i = 0; i < MAX_ENEMIES; i++) {
+            if (enemies[i].active && !enemies[i].dying && enemies[i].typed == 0) {
+                if (enemies[i].word[0] == c && enemies[i].y > lowest_y && enemies[i].y > -20.0f) {
+                    lowest_y = enemies[i].y;
+                    best = i;
+                }
+            }
+        }
+        if (best >= 0) {
+            targetIndex = best;
+            reticleTime = 1.0f;
+            sound_play(SFX_TARGET);
+        }
+    }
+
+    // Check hit on active target
+    if (targetIndex >= 0 && enemies[targetIndex].active) {
+        Enemy *e = &enemies[targetIndex];
+        if (e->word[e->typed] == c) {
+            e->typed++;
+            keysHit++;
+            streak++;
+            if (streak > bestStreak) bestStreak = streak;
+
+            // Multiplier steps
+            int oldMul = multiplier;
+            if (streak >= 50) multiplier = 3;
+            else if (streak >= 25) multiplier = 2;
+            else multiplier = 1;
+
+            if (multiplier > oldMul) {
+                if (multiplier == 2) sound_play(SFX_MULTI_2);
+                else if (multiplier == 3) sound_play(SFX_MULTI_3);
+            }
+
+            score += 10 * multiplier;
+
+            // Orient player towards target
+            float dx = e->x - player_x;
+            float dy = e->y - player_y;
+            player_target_angle = atan2f(dx, -dy);
+
+            shootPlasma(targetIndex);
+
+            if (e->typed >= e->len) {
+                e->dying = 1;
+                targetIndex = -1;
+            }
+            return;
+        }
+    }
+
+    // Miss!
+    keysMiss++;
+    streak = 0;
+    multiplier = 1;
+    sound_play(SFX_CLICK);
+    player_anim_frame = 4;
+    player_anim_timer = 6;
+    spawnSparks(player_x, player_y - 10.0f, 6, 0xFF4444FF, 2.0f);
 }
+
+/* ---------------- update logic ---------------- */
 static void killEnemy(int i) {
-	sound_play(SFX_EXPLODE);
-	burst(en[i].x, en[i].y, 30, RGB(255, 200, 80), 1.8f);
-	burst(en[i].x, en[i].y, 14, RGB(255, 255, 255), 1.2f);
-	score += en[i].len * 20 * (1 + combo / 10); kills++;
-	if (target == i) target = -1;
-	en[i].on = 0; shake = 4;
-}
-static void shoot(int e) {
-	for (int k = 0; k < MAXB; k++) if (!bu[k].on) {
-		bu[k] = (Bullet){1, W / 2, 205, e}; en[e].inflight++; sound_play(SFX_SHOOT); return;
-	}
-}
-static void typeKey(char c) {
-	if (c >= 'A' && c <= 'Z') c += 32;
-	if (c < 'a' || c > 'z') return;
-	if (target < 0) {
-		float by = -1e9; int bi = -1;
-		for (int i = 0; i < MAXE; i++)
-			if (en[i].on && !en[i].dying && en[i].typed == 0 && en[i].w[0] == c && en[i].y > by && en[i].y > -10) { by = en[i].y; bi = i; }
-		if (bi >= 0) target = bi;
-	}
-	if (target >= 0 && en[target].w[en[target].typed] == c) {
-		Enemy *e = &en[target];
-		e->typed++; shoot(target); keysHit++; combo++;
-		if (combo > bestCombo) bestCombo = combo;
-		score += 10 * (1 + combo / 10);
-		if (e->typed == e->len) { e->dying = 1; target = -1; }
-	} else { keysMiss++; combo = 0; sound_play(SFX_MISS); burst(W / 2, 210, 6, RGB(255, 60, 60), 1.f); }
+    Enemy *e = &enemies[i];
+    e->active = 0;
+    wordsKilled++;
+    score += e->len * 20 * multiplier;
+    triggerGridFlash();
+
+    if (e->type == ENEMY_MISSLE) {
+        sound_play(SFX_EXPLODE_S);
+        spawnExplosion(e->x, e->y, 0.9f);
+        spawnSparks(e->x, e->y, 16, 0x55FFAAFF, 3.0f);
+        triggerScreenShake(4);
+    } else if (e->type == ENEMY_MINE) {
+        sound_play(SFX_EXPLODE_M);
+        spawnExplosion(e->x, e->y, 1.1f);
+        spawnSparks(e->x, e->y, 22, 0xFFCC44FF, 3.5f);
+        triggerScreenShake(6);
+    } else {
+        sound_play(SFX_EXPLODE_L);
+        spawnExplosion(e->x, e->y, 1.8f);
+        spawnSparks(e->x, e->y, 35, 0xFF8844FF, 4.5f);
+        spawnSparks(e->x, e->y, 20, 0xFFFFFFFF, 3.0f);
+        triggerScreenShake(12);
+    }
+
+    if (targetIndex == i) targetIndex = -1;
 }
 
 static void update(void) {
-	frames++;
-	if (shake) shake--;
-	for (int i = 0; i < 90; i++) { st[i].y += st[i].v; if (st[i].y > H) { st[i].y = 0; st[i].x = rnd(W); } }
-	for (int k = 0; k < MAXP; k++) if (pa[k].on) {
-		pa[k].x += pa[k].vx; pa[k].y += pa[k].vy; pa[k].vx *= .96f; pa[k].vy *= .96f;
-		if (--pa[k].life <= 0) pa[k].on = 0;
-	}
-	if (state != S_PLAY) return;
-	if (bannerT > 0) bannerT--;
-	if (spawned < toSpawn && --spawnT <= 0) { spawnEnemy(); spawnT = 70 - level * 3; if (spawnT < 25) spawnT = 25; }
-	int alive = 0;
-	for (int i = 0; i < MAXE; i++) if (en[i].on) {
-		Enemy *e = &en[i]; alive++;
-		e->y += e->vy; e->ph += 0.05f; e->x += sinf(e->ph) * 0.25f;
-		int hw = e->len * 6 + 4;
-		if (e->x < hw) e->x = hw;
-		if (e->x > W - hw) e->x = W - hw;
-		if (e->y > 195) {
-			shield -= 20; combo = 0; shake = 10; sound_play(SFX_BREACH);
-			burst(e->x, e->y, 30, RGB(255, 80, 40), 2.f);
-			if (target == i) target = -1;
-			e->on = 0;
-			for (int k = 0; k < MAXB; k++) if (bu[k].on && bu[k].e == i) bu[k].on = 0;
-			if (shield <= 0) { shield = 0; state = S_OVER; sound_play(SFX_OVER); newHi = 0; if (score > hiscore) { hiscore = score; newHi = 1; hsSave(); } }
-		}
-	}
-	for (int k = 0; k < MAXB; k++) if (bu[k].on) {
-		Bullet *b = &bu[k];
-		if (!en[b->e].on) { b->on = 0; continue; }
-		float dx = en[b->e].x - b->x, dy = en[b->e].y - b->y, d = sqrtf(dx * dx + dy * dy);
-		if (d < 8) {
-			b->on = 0; en[b->e].inflight--;
-			burst(b->x, b->y, 5, RGB(120, 255, 200), 1.f);
-			if (en[b->e].dying && en[b->e].inflight <= 0) killEnemy(b->e);
-		} else { b->x += dx / d * 7; b->y += dy / d * 7; }
-	}
-	if (spawned >= toSpawn && alive == 0 && state == S_PLAY) {
-		score += 100 * level; startLevel(level + 1); sound_play(SFX_LEVEL);
-		if (shield < 100) { shield += 10; if (shield > 100) shield = 100; }
-	}
+    frameCount++;
+
+    // Background scrolls
+    bg_stars_scroll += 0.8f;
+    if (bg_stars_scroll >= 480.0f) bg_stars_scroll -= 480.0f;
+
+    // Grid flash decays
+    if (bg_grid_flash > 0.1f) {
+        bg_grid_flash -= 0.04f;
+        if (bg_grid_flash < 0.1f) bg_grid_flash = 0.1f;
+    }
+
+    // Screen shake decays
+    if (screen_shake > 0) screen_shake--;
+
+    // Reticle animation decays
+    if (reticleTime > 0.0f) {
+        reticleTime -= 0.035f;
+        if (reticleTime < 0.0f) reticleTime = 0.0f;
+    }
+
+    // Update sparks
+    for (int i = 0; i < MAX_SPARKS; i++) {
+        if (sparks[i].active) {
+            sparks[i].x += sparks[i].vx;
+            sparks[i].y += sparks[i].vy;
+            sparks[i].vx *= 0.96f;
+            sparks[i].vy *= 0.96f;
+            if (--sparks[i].life <= 0) sparks[i].active = 0;
+        }
+    }
+
+    // Update explosions
+    for (int i = 0; i < MAX_EXPLOSIONS; i++) {
+        if (explosions[i].active) {
+            explosions[i].frame += 0.25f;
+            if (explosions[i].frame >= 3.0f) explosions[i].active = 0;
+        }
+    }
+
+    // Update EMP wave
+    if (empWave.active) {
+        empWave.radius += 12.0f;
+        empWave.alpha = 1.0f - (empWave.radius / empWave.maxRadius);
+        if (empWave.radius >= empWave.maxRadius) empWave.active = 0;
+    }
+
+    if (state != STATE_PLAY) return;
+
+    // Player animation timer
+    if (player_anim_timer > 0) {
+        if (--player_anim_timer == 0) {
+            if (player_anim_frame >= 4) player_anim_frame = 0;
+            else if (player_anim_frame > 0) {
+                player_anim_frame--;
+                if (player_anim_frame > 0) player_anim_timer = 3;
+            }
+        }
+    }
+
+    // Smooth player rotation
+    float dAngle = player_target_angle - player_angle;
+    player_angle += dAngle * 0.18f;
+
+    // Enemy wave spawning
+    if (waveSpawned < waveToSpawn) {
+        if (--waveSpawnWait <= 0) {
+            int type = ENEMY_MINE;
+            int r = rnd(100);
+            if (wave >= 7 && (r < 15 || (wave % 7 == 0 && waveSpawned == 0))) {
+                type = ENEMY_OPPRESSOR;
+            } else if (wave >= 3 && (r < 35 || (wave % 3 == 0 && waveSpawned == 0))) {
+                type = ENEMY_DESTROYER;
+            } else if (wave >= 2 && r < 65) {
+                type = ENEMY_MISSLE;
+            } else {
+                type = ENEMY_MINE;
+            }
+            spawnEnemy(type);
+            waveSpawnWait = 45 - wave * 2;
+            if (waveSpawnWait < 18) waveSpawnWait = 18;
+        }
+    }
+
+    // Update enemies
+    int aliveCount = 0;
+    for (int i = 0; i < MAX_ENEMIES; i++) {
+        if (enemies[i].active) {
+            Enemy *e = &enemies[i];
+            aliveCount++;
+
+            e->x += e->vx;
+            e->y += e->vy;
+            if (e->type == ENEMY_MINE) {
+                e->angle += 0.04f;
+            }
+
+            // Word label margins
+            int hw = gx_text_width_enemy(e->word) / 2 + 10;
+            if (e->x < hw) { e->x = hw; e->vx = -e->vx; }
+            if (e->x > SCREEN_W - hw) { e->x = SCREEN_W - hw; e->vx = -e->vx; }
+
+            // Firing behavior for Destroyer / Oppressor
+            if (!e->dying && e->y > 30.0f) {
+                if (--e->shootTimer <= 0) {
+                    if (e->type == ENEMY_DESTROYER) {
+                        // Spawn missile
+                        spawnEnemy(ENEMY_MISSLE);
+                        e->shootTimer = rnd_range(160.0f, 260.0f);
+                    } else if (e->type == ENEMY_OPPRESSOR) {
+                        // Fire bullets towards player
+                        for (int b = 0; b < MAX_ENEMY_BULLETS; b++) {
+                            if (!enemyBullets[b].active) {
+                                enemyBullets[b].active = 1;
+                                enemyBullets[b].x = e->x;
+                                enemyBullets[b].y = e->y + 35.0f;
+                                float dx = player_x - e->x + rnd_range(-40.0f, 40.0f);
+                                float dy = player_y - (e->y + 35.0f);
+                                float d = sqrtf(dx * dx + dy * dy);
+                                enemyBullets[b].vx = (dx / d) * 2.2f;
+                                enemyBullets[b].vy = (dy / d) * 2.2f;
+                                break;
+                            }
+                        }
+                        e->shootTimer = rnd_range(90.0f, 150.0f);
+                    }
+                }
+            }
+
+            // Enemy reaches bottom
+            if (e->y > 440.0f) {
+                shield -= 25;
+                streak = 0;
+                multiplier = 1;
+                triggerScreenShake(18);
+                sound_play(SFX_EXPLODE_L);
+                spawnExplosion(e->x, e->y, 1.5f);
+                spawnSparks(e->x, e->y, 30, 0xFF4422FF, 4.0f);
+                e->active = 0;
+                if (targetIndex == i) targetIndex = -1;
+
+                if (shield <= 0) {
+                    shield = 0;
+                    state = STATE_OVER;
+                    sound_play(SFX_EXPLODE_P);
+                    spawnExplosion(player_x, player_y, 2.5f);
+                    spawnSparks(player_x, player_y, 60, 0x4DFED2FF, 6.0f);
+                    triggerScreenShake(30);
+
+                    if (score > hiscore) {
+                        hiscore = score;
+                        newHighScore = 1;
+                        hsSave();
+                    }
+                }
+            }
+        }
+    }
+
+    // Update enemy bullets
+    for (int b = 0; b < MAX_ENEMY_BULLETS; b++) {
+        if (enemyBullets[b].active) {
+            enemyBullets[b].x += enemyBullets[b].vx;
+            enemyBullets[b].y += enemyBullets[b].vy;
+
+            // Hit player
+            float dx = enemyBullets[b].x - player_x;
+            float dy = enemyBullets[b].y - player_y;
+            if (sqrtf(dx * dx + dy * dy) < 18.0f) {
+                enemyBullets[b].active = 0;
+                shield -= 10;
+                streak = 0;
+                multiplier = 1;
+                triggerScreenShake(8);
+                sound_play(SFX_HIT);
+                spawnSparks(player_x, player_y, 12, 0xFF6644FF, 3.0f);
+                if (shield <= 0) {
+                    shield = 0;
+                    state = STATE_OVER;
+                    sound_play(SFX_EXPLODE_P);
+                    spawnExplosion(player_x, player_y, 2.5f);
+                    triggerScreenShake(30);
+                    if (score > hiscore) { hiscore = score; newHighScore = 1; hsSave(); }
+                }
+            }
+
+            if (enemyBullets[b].y > 490.0f || enemyBullets[b].x < -20.0f || enemyBullets[b].x > 660.0f) {
+                enemyBullets[b].active = 0;
+            }
+        }
+    }
+
+    // Update plasmas
+    for (int i = 0; i < MAX_BULLETS; i++) {
+        if (plasmas[i].active) {
+            Plasma *p = &plasmas[i];
+            int eIdx = p->target_enemy;
+            if (!enemies[eIdx].active) {
+                p->active = 0;
+                continue;
+            }
+
+            float dx = enemies[eIdx].x - p->x;
+            float dy = enemies[eIdx].y - p->y;
+            float d = sqrtf(dx * dx + dy * dy);
+
+            if (d < 16.0f) {
+                p->active = 0;
+                enemies[eIdx].inflight--;
+                sound_play(SFX_HIT);
+                spawnSparks(p->x, p->y, 6, 0x4DFED2FF, 2.5f);
+
+                if (enemies[eIdx].dying && enemies[eIdx].inflight <= 0) {
+                    killEnemy(eIdx);
+                }
+            } else {
+                p->x += (dx / d) * 14.0f;
+                p->y += (dy / d) * 14.0f;
+            }
+        }
+    }
+
+    // Wave clear check
+    if (waveSpawned >= waveToSpawn && aliveCount == 0) {
+        if (waveClearTimer == 0) {
+            waveClearTimer = 120; // 2 seconds banner
+            score += 150 * wave;
+            if (emps < 3) emps++;
+            if (shield < 100) { shield += 20; if (shield > 100) shield = 100; }
+        } else {
+            if (--waveClearTimer == 0) {
+                startWave(wave + 1);
+            }
+        }
+    }
 }
 
-static void drawShip(int cx, int cy) {
-	u32 a = RGB(90, 220, 255), b = RGB(255, 255, 255);
-	line(cx, cy - 12, cx - 10, cy + 8, a); line(cx, cy - 12, cx + 10, cy + 8, a);
-	line(cx - 10, cy + 8, cx, cy + 3, a); line(cx + 10, cy + 8, cx, cy + 3, a);
-	px(cx, cy - 6, b); px(cx, cy - 5, b); rect(cx - 1, cy + 4, 3, 2 + (frames / 3) % 3, RGB(255, 160, 40));
+/* ---------------- render functions ---------------- */
+static void drawBackground(void) {
+    // 1. Scrolling starfield
+    gx_bind_stars();
+    gx_draw_sprite(0, bg_stars_scroll - 480.0f, SCREEN_W, 480, 0, 0, 1, 1, 0xFFFFFFFF);
+    gx_draw_sprite(0, bg_stars_scroll, SCREEN_W, 480, 0, 0, 1, 1, 0xFFFFFFFF);
+
+    // 2. Space gradient overlay (alpha 0.8)
+    gx_draw_gradient(0, 0, SCREEN_W, SCREEN_H, 0x031214D0, 0x234442D0);
+
+    // 3. Repeating cyber grid with flash
+    gx_bind_grid();
+    gx_set_blend_additive();
+    u8 grid_alpha = (u8)(bg_grid_flash * 255.0f);
+    u32 grid_col = (0xFFFFFF00) | grid_alpha;
+    gx_draw_sprite(0, 0, SCREEN_W, SCREEN_H, 0, 0, 1.2f, 1.0f, grid_col);
+    gx_set_blend_alpha();
 }
-static void drawEnemy(int i) {
-	Enemy *e = &en[i]; int x = (int)e->x, y = (int)e->y;
-	u32 c = e->kind == 0 ? RGB(255, 90, 120) : e->kind == 1 ? RGB(255, 200, 70) : RGB(190, 110, 255);
-	line(x - 8, y - 12, x + 8, y - 12, c); line(x - 8, y - 12, x, y - 4, c); line(x + 8, y - 12, x, y - 4, c);
-	line(x - 8, y - 12, x - 12, y - 16, c); line(x + 8, y - 12, x + 12, y - 16, c);
-	px(x - 3, y - 11, c); px(x + 3, y - 11, c);
-	int w = e->len * 12, tx = x - w / 2;
-	rect(tx - 2, y - 2, w + 3, 16, i == target ? RGB(0, 60, 40) : RGB(10, 10, 30));
-	for (int k = 0; k < e->len; k++) {
-		u32 gc = k < e->typed ? RGB(80, 255, 160) : RGB(235, 235, 255);
-		glyph(tx + k * 12, y + 1, e->w[k], 2, gc);
-	}
+
+static void drawPlayer(void) {
+    gx_set_blend_additive();
+
+    // 1. Exhaust trail puffs
+    for (int i = 0; i < 8; i++) {
+        float ey = (i * 18 + frameCount * 3) % 80;
+        float ex = player_x - 1.0f + sinf(frameCount * 0.2f + i) * 2.0f;
+        float alpha = (ey < 10) ? (ey / 10.0f) : (1.0f - (ey / 80.0f));
+        u8 a = (u8)(alpha * 160.0f);
+        gx_draw_sprite(ex - 6.0f, player_y + 10.0f + ey, 12, 16,
+                       SPRITE_EXHAUST_U0, SPRITE_EXHAUST_V0,
+                       SPRITE_EXHAUST_U1, SPRITE_EXHAUST_V1,
+                       (0x4DFED200) | a);
+    }
+
+    // 2. Ship frame (24x24 in sprite sheet at Y=SPRITE_SHIP_Y)
+    float u0 = (SPRITE_SHIP_X + player_anim_frame * 24.0f) / 512.0f;
+    float v0 = SPRITE_SHIP_V0;
+    float u1 = (SPRITE_SHIP_X + (player_anim_frame + 1) * 24.0f) / 512.0f;
+    float v1 = SPRITE_SHIP_V1;
+
+    gx_draw_sprite_rot(player_x, player_y, 36, 36, player_angle,
+                       u0, v0, u1, v1, 0xFFFFFFFF);
+
+    gx_set_blend_alpha();
+}
+
+static void drawTargetReticle(void) {
+    if (targetIndex < 0 || !enemies[targetIndex].active) return;
+    Enemy *e = &enemies[targetIndex];
+
+    gx_set_blend_additive();
+
+    // Subtle cyan laser beam from player to target
+    gx_draw_line(player_x, player_y - 12.0f, e->x, e->y, 1.5f, 0x4DFED244);
+
+    // Zooming reticle
+    float scale = (reticleTime > 0.0f) ? (0.45f + reticleTime * reticleTime * 2.0f) : 0.45f;
+    float angle = (reticleTime > 0.0f) ? (reticleTime * 3.14159f) : (frameCount * 0.02f);
+    float size = 256.0f * scale;
+
+    u8 a = (reticleTime > 0.0f) ? (u8)(sqrtf(1.0f - reticleTime) * 255.0f) : 180;
+    gx_draw_sprite_rot(e->x, e->y, size, size, angle,
+                       SPRITE_RETICLE_U0, SPRITE_RETICLE_V0,
+                       SPRITE_RETICLE_U1, SPRITE_RETICLE_V1,
+                       (0x4DFED200) | a);
+
+    gx_set_blend_alpha();
+}
+
+static void drawEnemies(void) {
+    gx_bind_sprites();
+    gx_set_blend_additive();
+
+    // 1. Draw enemy ships
+    for (int i = 0; i < MAX_ENEMIES; i++) {
+        if (enemies[i].active) {
+            Enemy *e = &enemies[i];
+            if (e->type == ENEMY_MISSLE) {
+                gx_draw_sprite_rot(e->x, e->y, 24, 30, 3.14159f,
+                                   SPRITE_MISSLE_U0, SPRITE_MISSLE_V0,
+                                   SPRITE_MISSLE_U1, SPRITE_MISSLE_V1,
+                                   0xFFFFFFFF);
+            } else if (e->type == ENEMY_MINE) {
+                gx_draw_sprite_rot(e->x, e->y, 34, 34, e->angle,
+                                   SPRITE_MINE_U0, SPRITE_MINE_V0,
+                                   SPRITE_MINE_U1, SPRITE_MINE_V1,
+                                   0xFFFFFFFF);
+            } else if (e->type == ENEMY_DESTROYER) {
+                gx_draw_sprite(e->x - 24, e->y - 30, 48, 60,
+                               SPRITE_DESTROYER_U0, SPRITE_DESTROYER_V0,
+                               SPRITE_DESTROYER_U1, SPRITE_DESTROYER_V1,
+                               0xFFFFFFFF);
+            } else if (e->type == ENEMY_OPPRESSOR) {
+                gx_draw_sprite(e->x - 36, e->y - 45, 72, 90,
+                               SPRITE_OPPRESSOR_U0, SPRITE_OPPRESSOR_V0,
+                               SPRITE_OPPRESSOR_U1, SPRITE_OPPRESSOR_V1,
+                               0xFFFFFFFF);
+            }
+        }
+    }
+
+    // 2. Draw enemy bullets
+    for (int b = 0; b < MAX_ENEMY_BULLETS; b++) {
+        if (enemyBullets[b].active) {
+            gx_draw_sprite(enemyBullets[b].x - 10, enemyBullets[b].y - 12, 20, 24,
+                           SPRITE_BULLET_U0, SPRITE_BULLET_V0,
+                           SPRITE_BULLET_U1, SPRITE_BULLET_V1,
+                           0xFFAA33FF);
+        }
+    }
+
+    // 3. Draw plasma bolts
+    for (int i = 0; i < MAX_BULLETS; i++) {
+        if (plasmas[i].active) {
+            gx_draw_sprite_rot(plasmas[i].x, plasmas[i].y, 32, 32, plasmas[i].angle,
+                               SPRITE_PLASMA_U0, SPRITE_PLASMA_V0,
+                               SPRITE_PLASMA_U1, SPRITE_PLASMA_V1,
+                               0xFFFFFFFF);
+        }
+    }
+
+    // 4. Draw explosions
+    for (int i = 0; i < MAX_EXPLOSIONS; i++) {
+        if (explosions[i].active) {
+            int f = (int)explosions[i].frame;
+            if (f > 2) f = 2;
+            float u0 = (SPRITE_EXPLOSION_X + f * 32.0f) / 512.0f;
+            float v0 = SPRITE_EXPLOSION_V0;
+            float u1 = (SPRITE_EXPLOSION_X + (f + 1) * 32.0f) / 512.0f;
+            float v1 = SPRITE_EXPLOSION_V1;
+            float sz = 48.0f * explosions[i].scale;
+            gx_draw_sprite(explosions[i].x - sz * 0.5f, explosions[i].y - sz * 0.5f, sz, sz,
+                           u0, v0, u1, v1, 0xFFFFFFFF);
+        }
+    }
+
+    // 5. Draw sparks
+    for (int i = 0; i < MAX_SPARKS; i++) {
+        if (sparks[i].active) {
+            float a = sparks[i].life / sparks[i].maxLife;
+            u8 alpha = (u8)(a * 255.0f);
+            u32 c = (sparks[i].color & 0xFFFFFF00) | alpha;
+            float sz = 16.0f * a + 4.0f;
+            gx_draw_sprite(sparks[i].x - sz * 0.5f, sparks[i].y - sz * 0.5f, sz, sz,
+                           SPRITE_SPARK_U0, SPRITE_SPARK_V0,
+                           SPRITE_SPARK_U1, SPRITE_SPARK_V1,
+                           c);
+        }
+    }
+
+    // 6. Draw EMP shockwave
+    if (empWave.active) {
+        u8 a = (u8)(empWave.alpha * 255.0f);
+        float sz = empWave.radius * 2.0f;
+        gx_draw_sprite(empWave.x - empWave.radius, empWave.y - empWave.radius, sz, sz,
+                       SPRITE_EMP_U0, SPRITE_EMP_V0,
+                       SPRITE_EMP_U1, SPRITE_EMP_V1,
+                       (0x4DFED200) | a);
+    }
+
+    gx_set_blend_alpha();
+
+    // 7. Draw enemy word labels (normal alpha blend)
+    for (int i = 0; i < MAX_ENEMIES; i++) {
+        if (enemies[i].active && !enemies[i].dying) {
+            Enemy *e = &enemies[i];
+            int textW = gx_text_width_enemy(e->word);
+            int boxX = (int)(e->x - textW * 0.5f);
+            int boxY = (int)(e->y + 22.0f);
+
+            if (boxX < 10) boxX = 10;
+            if (boxX + textW + 8 > SCREEN_W - 10) boxX = SCREEN_W - 10 - textW - 8;
+
+            // Semi-transparent dark background card
+            gx_draw_rect(boxX - 4, boxY - 2, textW + 8, 20, 0x000000C0);
+
+            // Active / targeted border highlight
+            if (i == targetIndex) {
+                gx_draw_rect(boxX - 4, boxY + 18, textW + 8, 2, 0x4DFED2FF);
+            }
+
+            // Word with typed letters in orange and untyped letters in white
+            gx_draw_text_enemy(boxX, boxY, e->word, e->typed);
+        }
+    }
+}
+
+static void drawHUD(void) {
+    char buf[64];
+
+    // Score & Wave (top-left)
+    snprintf(buf, sizeof(buf), "SCORE %06d", score);
+    gx_draw_text_ui(24, 16, buf, FONT_UI_18_WHITE, 0xFFFFFFFF);
+
+    snprintf(buf, sizeof(buf), "WAVE %03d", wave);
+    gx_draw_text_ui(24, 38, buf, FONT_UI_18_WHITE, 0x4DFED2FF);
+
+    // Multiplier progress bar (top-center)
+    gx_bind_sprites();
+    if (streak > 0) {
+        float barLen = (1.0f - 75.0f / (75.0f + streak * 2.0f)) * 220.0f;
+        float barX = (SCREEN_W - 220.0f) * 0.5f;
+        gx_draw_sprite(barX, 24, barLen, 3,
+                       SPRITE_BAR_BLUE_U0, SPRITE_BAR_BLUE_V0,
+                       SPRITE_BAR_BLUE_U1, SPRITE_BAR_BLUE_V1,
+                       0x4DFED2FF);
+
+        // Multiplier indicator (x2 or x3 badge)
+        if (multiplier >= 2) {
+            int tile = (multiplier == 3) ? 1 : 0;
+            float mu0 = (SPRITE_MULTI_INDICATOR_X + tile * 32.0f) / 512.0f;
+            float mv0 = SPRITE_MULTI_INDICATOR_V0;
+            float mu1 = (SPRITE_MULTI_INDICATOR_X + (tile + 1) * 32.0f) / 512.0f;
+            float mv1 = SPRITE_MULTI_INDICATOR_V1;
+
+            gx_draw_sprite(barX + barLen - 16, 6, 32, 18,
+                           mu0, mv0, mu1, mv1, 0xFFFFFFFF);
+        }
+    }
+
+    // EMP button icons (top-right)
+    int empTile = emps;
+    if (empTile < 0) empTile = 0;
+    if (empTile > 3) empTile = 3;
+    float eu0 = (SPRITE_EMP_BUTTONS_X + empTile * 34.0f) / 512.0f;
+    float ev0 = SPRITE_EMP_BUTTONS_V0;
+    float eu1 = (SPRITE_EMP_BUTTONS_X + (empTile + 1) * 34.0f) / 512.0f;
+    float ev1 = SPRITE_EMP_BUTTONS_V1;
+    gx_draw_sprite(SCREEN_W - 56, 14, 34, 40, eu0, ev0, eu1, ev1,
+                   (emps > 0) ? 0xFFFFFFFF : 0x888888AA);
+
+    // Shield integrity bar (bottom-left)
+    gx_draw_rect(24, SCREEN_H - 18, 120, 6, 0x112233C0);
+    u32 shieldCol = (shield > 50) ? 0x4DFED2FF : ((shield > 25) ? 0xFFAA33FF : 0xFF3333FF);
+    gx_draw_rect(24, SCREEN_H - 18, (120.0f * shield) / 100.0f, 6, shieldCol);
+    gx_draw_text_ui(152, SCREEN_H - 22, "SHIELD", FONT_UI_18_WHITE, 0x8899AAFF);
+
+    // Wave Clear Banner
+    if (waveClearTimer > 0) {
+        float t = waveClearTimer / 120.0f;
+        float bannerY = 180.0f + sinf(t * 3.14159f) * 10.0f;
+        snprintf(buf, sizeof(buf), "WAVE %03d CLEAR", wave);
+        gx_draw_text_ui_center(SCREEN_W / 2, bannerY, buf, FONT_UI_36_BLUE, 0xFFFFFFFF);
+
+        gx_bind_sprites();
+        gx_draw_sprite((SCREEN_W - 320) / 2, bannerY + 44, 320, 3,
+                       SPRITE_BAR_BLUE_U0, SPRITE_BAR_BLUE_V0,
+                       SPRITE_BAR_BLUE_U1, SPRITE_BAR_BLUE_V1,
+                       0x4DFED2FF);
+
+        snprintf(buf, sizeof(buf), "SCORE: %06d", score);
+        gx_draw_text_ui_center(SCREEN_W / 2, bannerY + 54, buf, FONT_UI_18_WHITE, 0xFFFFFFFF);
+    }
+}
+
+static void drawTitleScreen(void) {
+    drawBackground();
+
+    gx_bind_sprites();
+    gx_set_blend_additive();
+
+    // 1. PhobosLab byline banner
+    gx_draw_sprite((SCREEN_W - SPRITE_PHOBOSLAB_W) / 2, 45,
+                   SPRITE_PHOBOSLAB_W, SPRITE_PHOBOSLAB_H,
+                   SPRITE_PHOBOSLAB_U0, SPRITE_PHOBOSLAB_V0,
+                   SPRITE_PHOBOSLAB_U1, SPRITE_PHOBOSLAB_V1,
+                   0xFFFFFFFF);
+
+    // 2. Large ZType Logo
+    gx_bind_title();
+    gx_draw_sprite((SCREEN_W - 380) / 2, 85, 380, 170,
+                   TITLE_LOGO_U0, TITLE_LOGO_V0,
+                   TITLE_LOGO_U1, TITLE_LOGO_V1,
+                   0xFFFFFFFF);
+
+    // 3. Hovering Player Ship with thruster
+    float shipY = 275.0f + sinf(frameCount * 0.06f) * 5.0f;
+    for (int i = 0; i < 6; i++) {
+        float ey = (i * 12 + frameCount * 2) % 50;
+        float alpha = 1.0f - (ey / 50.0f);
+        gx_bind_sprites();
+        gx_draw_sprite(SCREEN_W / 2 - 8, shipY + 28 + ey, 16, 20,
+                       SPRITE_EXHAUST_U0, SPRITE_EXHAUST_V0,
+                       SPRITE_EXHAUST_U1, SPRITE_EXHAUST_V1,
+                       (0x4DFED200) | (u8)(alpha * 180));
+    }
+
+    gx_bind_title();
+    gx_draw_sprite(SCREEN_W / 2 - 16, shipY - 10, 32, 42,
+                   TITLE_SHIP_U0, TITLE_SHIP_V0,
+                   TITLE_SHIP_U1, TITLE_SHIP_V1,
+                   0xFFFFFFFF);
+
+    gx_set_blend_alpha();
+
+    // 4. Menu & prompt text
+    float pulse = (sinf(frameCount * 0.1f) * 0.3f + 0.7f);
+    u8 pulseAlpha = (u8)(pulse * 255.0f);
+    gx_draw_text_ui_center(SCREEN_W / 2, 345, "NEW GAME", FONT_UI_36_WHITE, 0xFFFFFFFF);
+    gx_draw_text_ui_center(SCREEN_W / 2, 395, "PRESS ENTER TO PLAY", FONT_UI_18_WHITE,
+                           (0x4DFED200) | pulseAlpha);
+
+    gx_draw_text_ui_center(SCREEN_W / 2, 422, "SPACE FOR EMP   -   TAB TO MUTE",
+                           FONT_UI_18_WHITE, 0x8899AACC);
+
+    if (hiscore > 0) {
+        char buf[64];
+        snprintf(buf, sizeof(buf), "HIGH SCORE: %06d", hiscore);
+        gx_draw_text_ui_center(SCREEN_W / 2, 445, buf, FONT_UI_18_WHITE, 0xFFAA33FF);
+    }
+}
+
+static void drawGameOver(void) {
+    drawBackground();
+
+    // "GAME OVER" title
+    gx_draw_text_ui_center(SCREEN_W / 2, 60, "GAME OVER", FONT_UI_36_BLUE, 0xFFFFFFFF);
+
+    // Blue divider bar
+    gx_bind_sprites();
+    gx_draw_sprite((SCREEN_W - 360) / 2, 105, 360, 3,
+                   SPRITE_BAR_BLUE_U0, SPRITE_BAR_BLUE_V0,
+                   SPRITE_BAR_BLUE_U1, SPRITE_BAR_BLUE_V1,
+                   0x4DFED2FF);
+
+    char buf[64];
+    int totalKeys = keysHit + keysMiss;
+    int acc = totalKeys ? (keysHit * 100 / totalKeys) : 0;
+    int wpm = (frameCount > 0) ? (int)(keysHit / 5.0f / (frameCount / 3600.0f)) : 0;
+
+    snprintf(buf, sizeof(buf), "SCORE: %06d", score);
+    gx_draw_text_ui_center(SCREEN_W / 2, 130, buf, FONT_UI_18_WHITE, 0xFFFFFFFF);
+
+    snprintf(buf, sizeof(buf), "WAVE REACHED: %d", wave);
+    gx_draw_text_ui_center(SCREEN_W / 2, 160, buf, FONT_UI_18_WHITE, 0x4DFED2FF);
+
+    snprintf(buf, sizeof(buf), "WORDS DESTROYED: %d", wordsKilled);
+    gx_draw_text_ui_center(SCREEN_W / 2, 190, buf, FONT_UI_18_WHITE, 0xFFFFFFFF);
+
+    snprintf(buf, sizeof(buf), "ACCURACY: %d%%", acc);
+    gx_draw_text_ui_center(SCREEN_W / 2, 220, buf, FONT_UI_18_WHITE, 0xFFFFFFFF);
+
+    snprintf(buf, sizeof(buf), "TYPING SPEED: %d WPM", wpm);
+    gx_draw_text_ui_center(SCREEN_W / 2, 250, buf, FONT_UI_18_WHITE, 0xFFFFFFFF);
+
+    snprintf(buf, sizeof(buf), "LONGEST STREAK: %d", bestStreak);
+    gx_draw_text_ui_center(SCREEN_W / 2, 280, buf, FONT_UI_18_WHITE, 0xFFFFFFFF);
+
+    snprintf(buf, sizeof(buf), "ALL-TIME BEST: %06d", hiscore);
+    gx_draw_text_ui_center(SCREEN_W / 2, 315, buf, FONT_UI_18_WHITE, 0xFFAA33FF);
+
+    if (newHighScore) {
+        gx_draw_text_ui_center(SCREEN_W / 2, 345, "NEW PERSONAL BEST!", FONT_UI_18_WHITE, 0x4DFED2FF);
+    }
+
+    float pulse = (sinf(frameCount * 0.1f) * 0.3f + 0.7f);
+    gx_draw_text_ui_center(SCREEN_W / 2, 395, "PRESS ENTER TO RETRY", FONT_UI_18_WHITE,
+                           (0xFFFFFF00) | (u8)(pulse * 255));
+}
+
+static void drawPauseScreen(void) {
+    drawBackground();
+    drawEnemies();
+    drawTargetReticle();
+    drawPlayer();
+    drawHUD();
+
+    // Dark tint
+    gx_draw_rect(0, 0, SCREEN_W, SCREEN_H, 0x000000AA);
+
+    gx_draw_text_ui_center(SCREEN_W / 2, 180, "PAUSED", FONT_UI_36_BLUE, 0xFFFFFFFF);
+    gx_draw_text_ui_center(SCREEN_W / 2, 240, "PRESS ENTER OR ESC TO RESUME",
+                           FONT_UI_18_WHITE, 0x4DFED2FF);
 }
 
 static void render(void) {
-	rect(0, 0, W, H, RGB(4, 4, 18));
-	for (int i = 0; i < 90; i++) { int v = 60 + (int)(st[i].v * 90); px((int)st[i].x, (int)st[i].y, RGB(v, v, v + 20)); }
-	for (int i = 0; i < MAXE; i++) if (en[i].on) drawEnemy(i);
-	if (state != S_TITLE) {
-		if (target >= 0 && en[target].on) {
-			line(W / 2, 195, (int)en[target].x, (int)en[target].y, RGB(40, 120, 90));
-			int x = (int)en[target].x, y = (int)en[target].y, w = en[target].len * 6 + 5;
-			u32 r = RGB(80, 255, 160);
-			line(x - w, y - 4, x - w, y + 15, r); line(x + w, y - 4, x + w, y + 15, r);
-		}
-		for (int k = 0; k < MAXB; k++) if (bu[k].on) { rect((int)bu[k].x - 1, (int)bu[k].y - 1, 3, 3, RGB(180, 255, 220)); }
-		drawShip(W / 2, 212);
-	}
-	for (int k = 0; k < MAXP; k++) if (pa[k].on) { int v = pa[k].life > 20 ? 20 : (int)pa[k].life;
-		u32 c = pa[k].c; int r = ((c >> 16) & 255) * v / 20, g = ((c >> 8) & 255) * v / 20, b = (c & 255) * v / 20;
-		px((int)pa[k].x, (int)pa[k].y, RGB(r, g, b)); }
-	char buf[64];
-	if (state != S_TITLE) {
-		snprintf(buf, sizeof buf, "SCORE %d", score); text(4, 3, buf, 1, RGB(200, 200, 255));
-		snprintf(buf, sizeof buf, "LEVEL %d", level); textc(W / 2, 3, buf, 1, RGB(200, 200, 255));
-		if (combo > 1) { snprintf(buf, sizeof buf, "COMBO %d", combo); text(W - 70, 3, buf, 1, RGB(255, 220, 90)); }
-		rect(4, H - 9, 102, 6, RGB(40, 40, 60)); rect(5, H - 8, shield, 4, shield > 40 ? RGB(60, 220, 120) : RGB(240, 70, 60));
-		text(110, H - 9, "SHIELD", 1, RGB(150, 150, 180));
-	}
-	if (state == S_PLAY && bannerT > 0) { snprintf(buf, sizeof buf, "LEVEL %d", level); textc(W / 2, 90, buf, 3, RGB(120, 255, 220)); }
-	if (state == S_TITLE) {
-		textc(W / 2, 55, "TYPESHOT", 5, RGB(100, 230, 255));
-		textc(W / 2, 100, "TYPE THE WORDS TO SHOOT THEM DOWN", 1, RGB(200, 200, 230));
-		textc(W / 2, 125, "PLUG IN A USB KEYBOARD", 1, RGB(255, 220, 120));
-		textc(W / 2, 160, (frames / 30) & 1 ? "PRESS ENTER TO START" : "", 2, RGB(255, 255, 255));
-		textc(W / 2, 185, "WIIMOTE A ALSO STARTS - HOME EXITS", 1, RGB(140, 140, 170));
-		textc(W / 2, 195, sound_muted() ? "SOUND OFF - TAB TO TOGGLE" : "SOUND ON - TAB TO MUTE", 1, RGB(140, 140, 170));
-		if (hiscore) { snprintf(buf, sizeof buf, "HI-SCORE %d", hiscore); textc(W / 2, 205, buf, 1, RGB(200, 200, 255)); }
-	}
-	if (state == S_PAUSE) { textc(W / 2, 100, "PAUSED", 4, RGB(255, 255, 255)); textc(W / 2, 140, "ENTER TO RESUME", 1, RGB(200, 200, 230)); }
-	if (state == S_OVER) {
-		textc(W / 2, 60, "GAME OVER", 4, RGB(255, 90, 90));
-		snprintf(buf, sizeof buf, "SCORE %d", score); textc(W / 2, 105, buf, 2, RGB(255, 255, 255));
-		int tot = keysHit + keysMiss, acc = tot ? keysHit * 100 / tot : 0;
-		int wpm = frames > 0 ? (int)(keysHit / 5.f / (frames / 3600.f)) : 0;
-		snprintf(buf, sizeof buf, "ACCURACY %d%%   WPM %d", acc, wpm); textc(W / 2, 135, buf, 1, RGB(200, 200, 255));
-		snprintf(buf, sizeof buf, "WORDS %d   BEST COMBO %d", kills, bestCombo); textc(W / 2, 150, buf, 1, RGB(200, 200, 255));
-		snprintf(buf, sizeof buf, "HI-SCORE %d", hiscore); textc(W / 2, 165, buf, 1, RGB(255, 220, 90));
-		if (newHi) textc(W / 2, 177, (frames / 15) & 1 ? "NEW HIGH SCORE!" : "", 1, RGB(120, 255, 160));
-		textc(W / 2, 190, "PRESS ENTER TO PLAY AGAIN", 1, RGB(255, 255, 255));
-	}
-	if (!kbOn && state != S_PLAY) textc(W / 2, 225, "NO KEYBOARD DETECTED", 1, RGB(255, 90, 90));
-}
+    gx_begin_frame();
 
-/* ---------------- video ---------------- */
-static void present(void) {
-	int H2 = rmode->xfbHeight, W2 = rmode->fbWidth / 2;
-	u32 *dst = xfb[fbi];
-	int ox = (shake ? rnd(5) - 2 : 0);
-	for (int y = 0, last = -1; y < H2; y++) {
-		int sy = y * H / H2;
-		if (sy != last) {
-			last = sy;
-			for (int x = 0; x < W; x++) {
-				u32 c = fb[sy][(x + ox + W) % W];
-				int r = (c >> 16) & 255, g = (c >> 8) & 255, b = c & 255;
-				int Y = (299 * r + 587 * g + 114 * b) / 1000;
-				int cb = 128 + (-169 * r - 331 * g + 500 * b) / 1000;
-				int cr = 128 + (500 * r - 419 * g - 81 * b) / 1000;
-				if (cb < 0) cb = 0;
-				if (cb > 255) cb = 255;
-				if (cr < 0) cr = 0;
-				if (cr > 255) cr = 255;
-				yuvrow[x] = (Y << 24) | (cb << 16) | (Y << 8) | cr;
-			}
-		}
-		u32 *row = dst + y * W2;
-		for (int x = 0; x < W2; x++) row[x] = yuvrow[x * W / W2];
-	}
-	VIDEO_SetNextFramebuffer(dst);
-	VIDEO_Flush();
-	VIDEO_WaitVSync();
-	fbi ^= 1;
+    if (state == STATE_TITLE) {
+        drawTitleScreen();
+    } else if (state == STATE_PLAY) {
+        drawBackground();
+        drawEnemies();
+        drawTargetReticle();
+        drawPlayer();
+        drawHUD();
+    } else if (state == STATE_PAUSE) {
+        drawPauseScreen();
+    } else if (state == STATE_OVER) {
+        drawGameOver();
+    }
+
+    if (!kbConnected && state != STATE_PLAY) {
+        gx_draw_text_ui_center(SCREEN_W / 2, SCREEN_H - 24, "KEYBOARD NOT DETECTED",
+                               FONT_UI_18_WHITE, 0xFF5555FF);
+    }
+
+    gx_end_frame();
 }
 
 static void startPressed(void) {
-	if (state == S_TITLE || state == S_OVER) newGame();
-	else if (state == S_PAUSE) state = S_PLAY;
+    if (state == STATE_TITLE || state == STATE_OVER) newGame();
+    else if (state == STATE_PAUSE) state = STATE_PLAY;
 }
 
-int main(void) {
-	VIDEO_Init();
-	WPAD_Init();
-	KEYBOARD_Init(NULL);
-	sound_init();
-	sdOK = fatInitDefault();
-	hsLoad();
-	rmode = VIDEO_GetPreferredMode(NULL);
-	xfb[0] = MEM_K0_TO_K1(SYS_AllocateFramebuffer(rmode));
-	xfb[1] = MEM_K0_TO_K1(SYS_AllocateFramebuffer(rmode));
-	VIDEO_Configure(rmode);
-	VIDEO_ClearFrameBuffer(rmode, xfb[0], COLOR_BLACK);
-	VIDEO_ClearFrameBuffer(rmode, xfb[1], COLOR_BLACK);
-	VIDEO_SetNextFramebuffer(xfb[0]);
-	VIDEO_SetBlack(false);
-	VIDEO_Flush();
-	VIDEO_WaitVSync();
-	if (rmode->viTVMode & VI_NON_INTERLACE) VIDEO_WaitVSync();
+/* ---------------- main ---------------- */
+int main(int argc, char **argv) {
+    WPAD_Init();
+    KEYBOARD_Init(NULL);
+    sound_init();
+    sdOK = fatInitDefault();
+    hsLoad();
+    gx_init();
 
-	for (nwords = 0; WORDS[nwords]; nwords++) ;
-	rng ^= SYS_Time();
-	for (int i = 0; i < 90; i++) { st[i].x = rnd(W); st[i].y = rnd(H); st[i].v = 0.2f + rnd(100) / 100.f * 1.2f; }
+    rng_seed = SYS_Time();
 
-	for (;;) {
-		WPAD_ScanPads();
-		u32 d = WPAD_ButtonsDown(0);
-		if (d & WPAD_BUTTON_HOME) break;
-		if (d & WPAD_BUTTON_A) startPressed();
-		if (d & WPAD_BUTTON_MINUS) sound_toggle_mute();
-		if (d & WPAD_BUTTON_PLUS) { if (state == S_PLAY) state = S_PAUSE; else if (state == S_PAUSE) state = S_PLAY; }
+    for (;;) {
+        WPAD_ScanPads();
+        u32 d = WPAD_ButtonsDown(0);
+        if (d & WPAD_BUTTON_HOME) break;
+        if (d & WPAD_BUTTON_A) startPressed();
+        if (d & WPAD_BUTTON_B) { if (state == STATE_PLAY) triggerEMP(); }
+        if (d & WPAD_BUTTON_MINUS) sound_toggle_mute();
+        if (d & WPAD_BUTTON_PLUS) {
+            if (state == STATE_PLAY) state = STATE_PAUSE;
+            else if (state == STATE_PAUSE) state = STATE_PLAY;
+        }
 
-		keyboard_event ke;
-		while (KEYBOARD_GetEvent(&ke)) {
-			if (ke.type == KEYBOARD_CONNECTED) kbOn = 1;
-			else if (ke.type == KEYBOARD_DISCONNECTED) kbOn = 0;
-			else if (ke.type == KEYBOARD_PRESSED) {
-				kbOn = 1;
-				if (ke.symbol == KS_Return) startPressed();
-				else if (ke.symbol == KS_Escape) { if (state == S_PLAY) state = S_PAUSE; else if (state == S_PAUSE) state = S_PLAY; }
-				else if (ke.symbol == KS_Tab) sound_toggle_mute();
-				else if (state == S_PLAY && ke.symbol < 128) typeKey((char)ke.symbol);
-			}
-		}
-		update();
-		render();
-		present();
-	}
-	KEYBOARD_Deinit();
-	return 0;
+        keyboard_event ke;
+        while (KEYBOARD_GetEvent(&ke)) {
+            if (ke.type == KEYBOARD_CONNECTED) kbConnected = 1;
+            else if (ke.type == KEYBOARD_DISCONNECTED) kbConnected = 0;
+            else if (ke.type == KEYBOARD_PRESSED) {
+                kbConnected = 1;
+                if (ke.symbol == KS_Return) {
+                    if (state == STATE_TITLE || state == STATE_OVER) startPressed();
+                    else if (state == STATE_PAUSE) state = STATE_PLAY;
+                    else if (state == STATE_PLAY) triggerEMP();
+                } else if (ke.symbol == KS_space) {
+                    if (state == STATE_PLAY) triggerEMP();
+                    else startPressed();
+                } else if (ke.symbol == KS_Escape) {
+                    if (state == STATE_PLAY) state = STATE_PAUSE;
+                    else if (state == STATE_PAUSE) state = STATE_PLAY;
+                } else if (ke.symbol == KS_Tab) {
+                    sound_toggle_mute();
+                } else if (state == STATE_PLAY && ke.symbol < 128) {
+                    handleKey((char)ke.symbol);
+                }
+            }
+        }
+
+        update();
+        render();
+    }
+
+    KEYBOARD_Deinit();
+    return 0;
 }

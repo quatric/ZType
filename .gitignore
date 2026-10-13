@@ -3,3 +3,5 @@ build/
 *.dol
 *.map
 .codesight/
+zty_assets/
+ztype_web.js
