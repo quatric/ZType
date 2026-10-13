@@ -6,5 +6,6 @@ procedural graphics (not a copy of zty.pe's assets).
 - Build: `make` (devkitPPC + libogc + libwiikeyboard)
 - Install: copy `apps/typeshot/` to `SD:/apps/` and launch from the Homebrew Channel, or `wiiload zType-wii.dol`
 - Controls: type letters to lock on and shoot; Enter = start; Esc = pause; Wiimote A/+ = start/pause; HOME = exit; Tab or Wiimote - = mute
+- High score saves to `sd:/apps/typeshot/highscore.dat`
 - Sound is synthesized at startup (SFX + looping music), no audio assets
 - CI: GitHub Actions builds the .dol on every push (see `.github/workflows/build.yml`)

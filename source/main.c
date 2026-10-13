@@ -6,6 +6,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <fat.h>
+#include <sys/stat.h>
 #include "sound.h"
 #include <math.h>
 
@@ -82,6 +84,30 @@ static void textc(int cx, int y, const char *t, int s, u32 c) {
 	text(cx - (int)strlen(t) * 3 * s, y, t, s, c);
 }
 
+/* ---------------- high score (SD card) ---------------- */
+#define HS_DIR "sd:/apps/typeshot"
+#define HS_FILE HS_DIR "/highscore.dat"
+static int sdOK, hiscore;
+
+static unsigned hsSum(unsigned v) { return (v * 2654435761u) ^ 0x5459u; }
+static void hsLoad(void) {
+	if (!sdOK) return;
+	FILE *f = fopen(HS_FILE, "r");
+	if (!f) return;
+	unsigned v, c;
+	if (fscanf(f, "TSHOT1 %u %u", &v, &c) == 2 && c == hsSum(v)) hiscore = (int)v;
+	fclose(f);
+}
+static void hsSave(void) {
+	if (!sdOK) return;
+	mkdir("sd:/apps", 0777);
+	mkdir(HS_DIR, 0777);
+	FILE *f = fopen(HS_FILE, "w");
+	if (!f) return;
+	fprintf(f, "TSHOT1 %u %u\n", (unsigned)hiscore, hsSum((unsigned)hiscore));
+	fclose(f);
+}
+
 /* ---------------- words ---------------- */
 static const char *WORDS[] = {
  "go","up","ion","orb","ray","gas","jet","sun","fly","hit","arc","fox","zap","hex","bit",
@@ -113,7 +139,7 @@ enum { S_TITLE, S_PLAY, S_PAUSE, S_OVER };
 static int state = S_TITLE;
 static int level, spawned, toSpawn, target, score, combo, bestCombo, shield;
 static int keysHit, keysMiss, kills, frames, spawnT, bannerT;
-static int hiscore, shake, kbOn;
+static int shake, kbOn, newHi;
 static unsigned rng = 12345;
 static int rnd(int n) { rng = rng * 1103515245 + 12345; return (int)((rng >> 16) % (unsigned)n); }
 
@@ -213,7 +239,7 @@ static void update(void) {
 			if (target == i) target = -1;
 			e->on = 0;
 			for (int k = 0; k < MAXB; k++) if (bu[k].on && bu[k].e == i) bu[k].on = 0;
-			if (shield <= 0) { shield = 0; state = S_OVER; sound_play(SFX_OVER); if (score > hiscore) hiscore = score; }
+			if (shield <= 0) { shield = 0; state = S_OVER; sound_play(SFX_OVER); newHi = 0; if (score > hiscore) { hiscore = score; newHi = 1; hsSave(); } }
 		}
 	}
 	for (int k = 0; k < MAXB; k++) if (bu[k].on) {
@@ -296,6 +322,7 @@ static void render(void) {
 		snprintf(buf, sizeof buf, "ACCURACY %d%%   WPM %d", acc, wpm); textc(W / 2, 135, buf, 1, RGB(200, 200, 255));
 		snprintf(buf, sizeof buf, "WORDS %d   BEST COMBO %d", kills, bestCombo); textc(W / 2, 150, buf, 1, RGB(200, 200, 255));
 		snprintf(buf, sizeof buf, "HI-SCORE %d", hiscore); textc(W / 2, 165, buf, 1, RGB(255, 220, 90));
+		if (newHi) textc(W / 2, 177, (frames / 15) & 1 ? "NEW HIGH SCORE!" : "", 1, RGB(120, 255, 160));
 		textc(W / 2, 190, "PRESS ENTER TO PLAY AGAIN", 1, RGB(255, 255, 255));
 	}
 	if (!kbOn && state != S_PLAY) textc(W / 2, 225, "NO KEYBOARD DETECTED", 1, RGB(255, 90, 90));
@@ -342,6 +369,8 @@ int main(void) {
 	WPAD_Init();
 	KEYBOARD_Init(NULL);
 	sound_init();
+	sdOK = fatInitDefault();
+	hsLoad();
 	rmode = VIDEO_GetPreferredMode(NULL);
 	xfb[0] = MEM_K0_TO_K1(SYS_AllocateFramebuffer(rmode));
 	xfb[1] = MEM_K0_TO_K1(SYS_AllocateFramebuffer(rmode));
