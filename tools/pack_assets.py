@@ -8,7 +8,7 @@ def ensure_assets():
         urllib.request.urlretrieve('https://zty.pe/ztype.min.js', 'ztype_web.js')
     
     assets = [
-        'background/gradient.png', 'background/grid.png', 'background/stars.jpg',
+        'background/gradient.png', 'background/grid.png', 'background/stars.jpg', 'background/page.png',
         'fonts/avenir-18-white.png', 'fonts/avenir-22-orange-v2.png', 'fonts/avenir-22-white-v2.png',
         'fonts/avenir-36-blue.png', 'fonts/avenir-36-orange.png', 'fonts/avenir-36-white.png',
         'sprites/bullet.png', 'sprites/destroyer.png', 'sprites/emp.png', 'sprites/explosion.png',
@@ -16,6 +16,7 @@ def ensure_assets():
         'sprites/ship.png', 'sprites/spark.png',
         'title/credits.png', 'title/exhaust.png', 'title/ship.png', 'title/ztype.png', 'title/phoboslab.png',
         'ui/bar-blue.png', 'ui/emp-buttons.png', 'ui/multi-indicator.png', 'ui/reticle.png',
+        'ui/pause.png', 'ui/personal-best-badge.png',
         'sounds/cancel.ogg', 'sounds/click.ogg', 'sounds/emp.ogg', 'sounds/explosion-large.ogg',
         'sounds/explosion-player.ogg', 'sounds/explosion-small.ogg', 'sounds/explosion.ogg',
         'sounds/hit.ogg', 'sounds/multi-2.ogg', 'sounds/multi-3.ogg', 'sounds/plasma.ogg',
@@ -29,6 +30,7 @@ def ensure_assets():
             urllib.request.urlretrieve('https://zty.pe/media/' + a, dest)
 
 ensure_assets()
+
 def encode_rgba8(img):
     w, h = img.size
     bw = (w + 3) // 4
@@ -99,6 +101,8 @@ sprite_files = [
     ('exhaust', 'zty_assets/title/exhaust.png'),
     ('phoboslab', 'zty_assets/title/phoboslab.png'),
     ('bar_blue', 'zty_assets/ui/bar-blue.png'),
+    ('pause', 'zty_assets/ui/pause.png'),
+    ('personal_best', 'zty_assets/ui/personal-best-badge.png'),
 ]
 
 sprite_rects = {
@@ -136,7 +140,7 @@ font_enemy.paste(f_o, (0, 112))
 with open('data/tex_font_enemy.bin', 'wb') as f:
     f.write(encode_rgba8(font_enemy))
 
-# ----------------- 3. UI Font -----------------
+# ----------------- 3. UI Font (1024x512) -----------------
 print("Packing tex_font_ui...")
 def parse_impact_font(path):
     im = Image.open(path).convert('RGBA')
@@ -159,14 +163,15 @@ def parse_impact_font(path):
         glyphs.append((start_x, 0, w - start_x, char_h))
     return im.crop((0, 0, w, char_h)), glyphs
 
-font_ui = Image.new('RGBA', (512, 512), (0, 0, 0, 0))
+font_ui = Image.new('RGBA', (1024, 512), (0, 0, 0, 0))
 ui_font_maps = {}
 cur_x, cur_y, row_h = 0, 0, 0
-for fname in ['avenir-36-blue', 'avenir-36-white', 'avenir-18-white']:
+ui_font_names = ['avenir-36-blue', 'avenir-36-white', 'avenir-36-orange', 'avenir-18-white']
+for fname in ui_font_names:
     im, glyphs = parse_impact_font(f'zty_assets/fonts/{fname}.png')
     g_map = []
     for gx, gy, gw, gh in glyphs:
-        if cur_x + gw > 512:
+        if cur_x + gw > 1024:
             cur_x = 0
             cur_y += row_h + 1
             row_h = 0
@@ -200,8 +205,8 @@ title_rects = {
     'ship': (0, target_h + 4, title_ship.width, title_ship.height)
 }
 
-# ----------------- 5. Backgrounds -----------------
-print("Packing tex_stars & tex_grid...")
+# ----------------- 5. Backgrounds & Page -----------------
+print("Packing tex_stars, tex_grid & tex_page...")
 stars = Image.open('zty_assets/background/stars.jpg').convert('RGB').resize((512, 512), Image.Resampling.LANCZOS)
 with open('data/tex_stars.bin', 'wb') as f:
     f.write(encode_rgb565(stars))
@@ -209,6 +214,10 @@ with open('data/tex_stars.bin', 'wb') as f:
 grid = Image.open('zty_assets/background/grid.png').convert('RGBA').resize((512, 512), Image.Resampling.LANCZOS)
 with open('data/tex_grid.bin', 'wb') as f:
     f.write(encode_rgba8(grid))
+
+page = Image.open('zty_assets/background/page.png').convert('RGB').resize((512, 512), Image.Resampling.LANCZOS)
+with open('data/tex_page.bin', 'wb') as f:
+    f.write(encode_rgb565(page))
 
 # ----------------- 6. SFX PCM -----------------
 print("Exporting SFX PCM...")
@@ -276,14 +285,19 @@ with open('source/assets.h', 'w') as f:
         f.write(f'    {{{sx}, {sy}, {sw}, {sh}, {ox}, {oy}, {adv}}},\n')
     f.write('};\n\n')
 
-    # UI font glyphs
+    # UI font glyphs (1024x512 texture)
     f.write('typedef struct {\n    float u0, v0, u1, v1;\n    uint8_t w, h, adv;\n} GlyphUI;\n\n')
-    for fname, arr_name in [('avenir-36-blue', 'FONT36_BLUE'), ('avenir-36-white', 'FONT36_WHITE'), ('avenir-18-white', 'FONT18_WHITE')]:
+    for fname, arr_name in [
+        ('avenir-36-blue', 'FONT36_BLUE'),
+        ('avenir-36-white', 'FONT36_WHITE'),
+        ('avenir-36-orange', 'FONT36_ORANGE'),
+        ('avenir-18-white', 'FONT18_WHITE')
+    ]:
         f.write(f'static const GlyphUI {arr_name}_GLYPHS[95] = {{\n')
         for gx, gy, gw, gh in ui_font_maps[fname]:
-            u0 = gx / 512.0
+            u0 = gx / 1024.0
             v0 = gy / 512.0
-            u1 = (gx + gw) / 512.0
+            u1 = (gx + gw) / 1024.0
             v1 = (gy + gh) / 512.0
             f.write(f'    {{{u0:.6f}f, {v0:.6f}f, {u1:.6f}f, {v1:.6f}f, {gw}, {gh}, {gw}}},\n')
         f.write('};\n\n')

@@ -9,6 +9,7 @@
 #include "tex_title_bin.h"
 #include "tex_stars_bin.h"
 #include "tex_grid_bin.h"
+#include "tex_page_bin.h"
 
 #define FIFO_SIZE (256 * 1024)
 
@@ -23,6 +24,7 @@ static GXTexObj tex_font_ui;
 static GXTexObj tex_title;
 static GXTexObj tex_stars;
 static GXTexObj tex_grid;
+static GXTexObj tex_page;
 
 void gx_init(void) {
     VIDEO_Init();
@@ -87,7 +89,7 @@ void gx_init(void) {
     GX_InitTexObjFilterMode(&tex_font_enemy, GX_LINEAR, GX_LINEAR);
 
     DCFlushRange((void*)tex_font_ui_bin, tex_font_ui_bin_size);
-    GX_InitTexObj(&tex_font_ui, (void*)tex_font_ui_bin, 512, 512, GX_TF_RGBA8, GX_CLAMP, GX_CLAMP, GX_FALSE);
+    GX_InitTexObj(&tex_font_ui, (void*)tex_font_ui_bin, 1024, 512, GX_TF_RGBA8, GX_CLAMP, GX_CLAMP, GX_FALSE);
     GX_InitTexObjFilterMode(&tex_font_ui, GX_LINEAR, GX_LINEAR);
 
     DCFlushRange((void*)tex_title_bin, tex_title_bin_size);
@@ -102,13 +104,32 @@ void gx_init(void) {
     GX_InitTexObj(&tex_grid, (void*)tex_grid_bin, 512, 512, GX_TF_RGBA8, GX_REPEAT, GX_REPEAT, GX_FALSE);
     GX_InitTexObjFilterMode(&tex_grid, GX_LINEAR, GX_LINEAR);
 
+    DCFlushRange((void*)tex_page_bin, tex_page_bin_size);
+    GX_InitTexObj(&tex_page, (void*)tex_page_bin, 512, 512, GX_TF_RGB565, GX_REPEAT, GX_REPEAT, GX_FALSE);
+    GX_InitTexObjFilterMode(&tex_page, GX_LINEAR, GX_LINEAR);
+
+    gx_set_screen_viewport();
+}
+
+void gx_set_screen_viewport(void) {
+    GX_SetViewport(0, 0, rmode->fbWidth, rmode->efbHeight, 0, 1);
+    GX_SetScissor(0, 0, rmode->fbWidth, rmode->efbHeight);
     Mtx44 perspective;
     guOrtho(perspective, 0, SCREEN_H, 0, SCREEN_W, 0, 300);
     GX_LoadProjectionMtx(perspective, GX_ORTHOGRAPHIC);
 }
 
+void gx_set_canvas_viewport(void) {
+    float cw = (float)rmode->efbHeight * (2.0f / 3.0f);
+    float cx = ((float)rmode->fbWidth - cw) * 0.5f;
+    GX_SetViewport(cx, 0, cw, rmode->efbHeight, 0, 1);
+    GX_SetScissor((u32)cx, 0, (u32)cw, rmode->efbHeight);
+    Mtx44 perspective;
+    guOrtho(perspective, 0, GAME_H, 0, GAME_W, 0, 300);
+    GX_LoadProjectionMtx(perspective, GX_ORTHOGRAPHIC);
+}
+
 void gx_begin_frame(void) {
-    GX_SetViewport(0, 0, rmode->fbWidth, rmode->efbHeight, 0, 1);
     GX_InvVtxCache();
     GX_InvalidateTexAll();
 
@@ -152,6 +173,7 @@ void gx_bind_ui_font(void) { GX_LoadTexObj(&tex_font_ui, GX_TEXMAP0); }
 void gx_bind_title(void) { GX_LoadTexObj(&tex_title, GX_TEXMAP0); }
 void gx_bind_stars(void) { GX_LoadTexObj(&tex_stars, GX_TEXMAP0); }
 void gx_bind_grid(void) { GX_LoadTexObj(&tex_grid, GX_TEXMAP0); }
+void gx_bind_page(void) { GX_LoadTexObj(&tex_page, GX_TEXMAP0); }
 
 void gx_draw_sprite(float x, float y, float w, float h,
                     float u0, float v0, float u1, float v1, u32 color) {
@@ -235,6 +257,46 @@ void gx_draw_gradient(float x, float y, float w, float h, u32 top_color, u32 bot
     GX_End();
 }
 
+void gx_draw_hgradient(float x, float y, float w, float h, u32 left_color, u32 right_color) {
+    gx_bind_sprites();
+    float u = (SPRITE_BAR_BLUE_X + 1.0f) / 512.0f;
+    float v = (SPRITE_BAR_BLUE_Y + 1.0f) / 512.0f;
+    GX_Begin(GX_QUADS, GX_VTXFMT0, 4);
+    GX_Position2f32(x, y);
+    GX_Color1u32(left_color);
+    GX_TexCoord2f32(u, v);
+
+    GX_Position2f32(x + w, y);
+    GX_Color1u32(right_color);
+    GX_TexCoord2f32(u, v);
+
+    GX_Position2f32(x + w, y + h);
+    GX_Color1u32(right_color);
+    GX_TexCoord2f32(u, v);
+
+    GX_Position2f32(x, y + h);
+    GX_Color1u32(left_color);
+    GX_TexCoord2f32(u, v);
+    GX_End();
+}
+
+void gx_draw_page_backdrop(void) {
+    gx_set_screen_viewport();
+    gx_bind_page();
+
+    float u_max = (float)SCREEN_W / 512.0f;
+    float v_max = (float)SCREEN_H / 512.0f;
+    gx_draw_sprite(0, 0, SCREEN_W, SCREEN_H, 0, 0, u_max, v_max, 0xFFFFFFFF);
+
+    float cw = (float)SCREEN_H * (2.0f / 3.0f);
+    float cx = ((float)SCREEN_W - cw) * 0.5f;
+
+    // Drop shadow: left edge
+    gx_draw_hgradient(cx - 24.0f, 0, 24.0f, SCREEN_H, 0x00000000, 0x000000E0);
+    // Drop shadow: right edge
+    gx_draw_hgradient(cx + cw, 0, 24.0f, SCREEN_H, 0x000000E0, 0x00000000);
+}
+
 void gx_draw_line(float x0, float y0, float x1, float y1, float width, u32 color) {
     float dx = x1 - x0;
     float dy = y1 - y0;
@@ -269,13 +331,16 @@ void gx_draw_line(float x0, float y0, float x1, float y1, float width, u32 color
 int gx_text_width_ui(const char *str, int font_type) {
     if (!str) return 0;
     const GlyphUI *glyphs = (font_type == FONT_UI_36_BLUE) ? FONT36_BLUE_GLYPHS :
-                            (font_type == FONT_UI_36_WHITE) ? FONT36_WHITE_GLYPHS : FONT18_WHITE_GLYPHS;
+                            (font_type == FONT_UI_36_WHITE) ? FONT36_WHITE_GLYPHS :
+                            (font_type == FONT_UI_36_ORANGE) ? FONT36_ORANGE_GLYPHS :
+                            FONT18_WHITE_GLYPHS;
+    int spacing = (font_type == FONT_UI_18_WHITE) ? -1 : -2;
     int w = 0;
     for (; *str; str++) {
         char ch = *str;
         if (ch < 32 || ch > 126) ch = ' ';
         int idx = ch - 32;
-        w += glyphs[idx].adv;
+        w += glyphs[idx].adv + spacing;
     }
     return w;
 }
@@ -284,7 +349,10 @@ void gx_draw_text_ui(float x, float y, const char *str, int font_type, u32 color
     if (!str) return;
     gx_bind_ui_font();
     const GlyphUI *glyphs = (font_type == FONT_UI_36_BLUE) ? FONT36_BLUE_GLYPHS :
-                            (font_type == FONT_UI_36_WHITE) ? FONT36_WHITE_GLYPHS : FONT18_WHITE_GLYPHS;
+                            (font_type == FONT_UI_36_WHITE) ? FONT36_WHITE_GLYPHS :
+                            (font_type == FONT_UI_36_ORANGE) ? FONT36_ORANGE_GLYPHS :
+                            FONT18_WHITE_GLYPHS;
+    int spacing = (font_type == FONT_UI_18_WHITE) ? -1 : -2;
 
     for (; *str; str++) {
         char ch = *str;
@@ -292,7 +360,7 @@ void gx_draw_text_ui(float x, float y, const char *str, int font_type, u32 color
         int idx = ch - 32;
         const GlyphUI *g = &glyphs[idx];
         gx_draw_sprite(x, y, g->w, g->h, g->u0, g->v0, g->u1, g->v1, color);
-        x += g->adv;
+        x += g->adv + spacing;
     }
 }
 
@@ -304,17 +372,19 @@ void gx_draw_text_ui_center(float cx, float y, const char *str, int font_type, u
 int gx_text_width_enemy(const char *str) {
     if (!str) return 0;
     int w = 0;
+    int len = 0;
     for (; *str; str++) {
         uint8_t ch = (uint8_t)*str;
         if (ch < 32) ch = ' ';
         int idx = ch - 32;
         if (idx < 224) {
-            w += ENEMY_FONT_METRICS[idx].adv + 1;
+            w += ENEMY_FONT_METRICS[idx].adv;
         } else {
             w += 10;
         }
+        len++;
     }
-    return w;
+    return w + (len + 1) / 2;
 }
 
 void gx_draw_text_enemy(float x, float y, const char *str, int typed_count) {
@@ -336,5 +406,28 @@ void gx_draw_text_enemy(float x, float y, const char *str, int typed_count) {
 
         gx_draw_sprite(x + g->ox, y + g->oy, g->sw, g->sh, u0, v0, u1, v1, 0xFFFFFFFF);
         x += g->adv + 1;
+    }
+}
+
+void gx_draw_text_enemy_right(float right_x, float y, const char *str, int is_active) {
+    if (!str || !*str) return;
+    int w = gx_text_width_enemy(str);
+    float start_x = right_x - w;
+
+    gx_bind_enemy_font();
+    for (; *str; str++) {
+        uint8_t ch = (uint8_t)*str;
+        if (ch < 32) ch = ' ';
+        int idx = ch - 32;
+        if (idx >= 224) idx = 0;
+
+        const Glyph22 *g = &ENEMY_FONT_METRICS[idx];
+        float u0 = g->sx / 512.0f;
+        float v0 = (g->sy + (is_active ? 112 : 0)) / 224.0f;
+        float u1 = (g->sx + g->sw) / 512.0f;
+        float v1 = (g->sy + g->sh + (is_active ? 112 : 0)) / 224.0f;
+
+        gx_draw_sprite(start_x + g->ox, y + g->oy, g->sw, g->sh, u0, v0, u1, v1, 0xFFFFFFFF);
+        start_x += g->adv + 1;
     }
 }

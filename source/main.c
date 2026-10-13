@@ -1,6 +1,6 @@
 /*
- * TypeShot Wii - ZType typing shooter for Nintendo Wii
- * Renders with hardware-accelerated GX at 640x480 60fps.
+ * ZType for Nintendo Wii
+ * Visual and mechanical 1:1 reproduction of Dominic Szablewski's ZType (zty.pe).
  */
 #include <gccore.h>
 #include <wiiuse/wpad.h>
@@ -17,7 +17,6 @@
 #include "words.h"
 #include "sound.h"
 
-/* ---------------- high score (SD card) ---------------- */
 #define HS_DIR "sd:/apps/typeshot"
 #define HS_FILE HS_DIR "/highscore.dat"
 static int sdOK = 0;
@@ -42,34 +41,55 @@ static void hsSave(void) {
     fclose(f);
 }
 
-/* ---------------- game constants & types ---------------- */
-#define MAX_ENEMIES 24
+/* ---------------- Easing functions ---------------- */
+static float inOutQuad(float t, float b, float c, float d) {
+    t /= d / 2.0f;
+    if (t < 1.0f) return c / 2.0f * t * t + b;
+    t -= 1.0f;
+    return -c / 2.0f * (t * (t - 2.0f) - 1.0f) + b;
+}
+
+static float inOutBack(float t, float b, float c, float d) {
+    float s = 1.70158f;
+    t /= d / 2.0f;
+    if (t < 1.0f) {
+        s *= 1.525f;
+        return c / 2.0f * (t * t * ((s + 1.0f) * t - s)) + b;
+    }
+    t -= 2.0f;
+    s *= 1.525f;
+    return c / 2.0f * (t * t * ((s + 1.0f) * t + s) + 2.0f) + b;
+}
+
+/* ---------------- Game state & entities ---------------- */
+#define MAX_ENEMIES 32
 #define MAX_BULLETS 48
 #define MAX_SPARKS  256
 #define MAX_EXPLOSIONS 16
 #define MAX_ENEMY_BULLETS 32
 
 enum {
-    ENEMY_MISSLE = 0,
-    ENEMY_MINE,
+    ENEMY_MINE = 0,
     ENEMY_DESTROYER,
-    ENEMY_OPPRESSOR
+    ENEMY_OPPRESSOR,
+    ENEMY_BULLET
 };
 
 typedef struct {
     int active;
     int type;
     char word[24];
+    char remaining[24];
     int len;
-    int typed;
-    int inflight;
-    int dying;
     float x, y;
     float vx, vy;
     float angle;
     float spin;
     float shootTimer;
-    int shootCount;
+    int targeted;
+    float reticleTimer;
+    int dying;
+    int inflight;
 } Enemy;
 
 typedef struct {
@@ -97,63 +117,64 @@ typedef struct {
 typedef struct {
     int active;
     float x, y;
-    float vx, vy;
-} EnemyBullet;
-
-typedef struct {
-    int active;
-    float x, y;
     float radius;
-    float maxRadius;
     float alpha;
 } EMPWave;
 
 enum {
     STATE_TITLE,
+    STATE_INTRO_TRANSITION,
     STATE_PLAY,
     STATE_PAUSE,
     STATE_OVER
 };
 
 static int state = STATE_TITLE;
-static int wave = 1;
+static float titleTransitionTime = 0.0f;
+
+static int wave = 0;
 static int score = 0;
 static int streak = 0;
-static int bestStreak = 0;
+static int longestStreak = 0;
+static int hits = 0;
+static int misses = 0;
+static int kills = 0;
 static int multiplier = 1;
 static int emps = 3;
-static int shield = 100;
-static int keysHit = 0;
-static int keysMiss = 0;
-static int wordsKilled = 0;
-static int frameCount = 0;
-static int targetIndex = -1;
-static float reticleTime = 0.0f;
+static int isPersonalBest = 0;
+static float multiplierTimer = 0.0f;
+static int multiplierIndex = 0;
 
-static float player_x = 320.0f;
-static float player_y = 430.0f;
+static float idleTimer = 0.0f;
+static float waveEndTimer = 0.0f;
+static float spawnTimer = 0.0f;
+static float spawnWait = 0.7f;
+static float speedFactor = 1.0f;
+
+static float player_x = 234.0f;
+static float player_y = 642.0f;
 static float player_angle = 0.0f;
 static float player_target_angle = 0.0f;
 static int player_anim_frame = 0;
 static int player_anim_timer = 0;
 
 static float bg_stars_scroll = 0.0f;
-static float bg_grid_flash = 0.1f;
+static float lastKillTimer = 0.0f;
 static int screen_shake = 0;
-static int waveClearTimer = 0;
-static int newHighScore = 0;
-static int kbConnected = 1;
+static int currentTargetIdx = -1;
 
 static Enemy enemies[MAX_ENEMIES];
 static Plasma plasmas[MAX_BULLETS];
 static Spark sparks[MAX_SPARKS];
 static Explosion explosions[MAX_EXPLOSIONS];
-static EnemyBullet enemyBullets[MAX_ENEMY_BULLETS];
 static EMPWave empWave;
 
-static int waveToSpawn = 0;
-static int waveSpawned = 0;
-static int waveSpawnWait = 0;
+typedef struct {
+    int type;
+    int wait;
+} WaveSpawnItem;
+static WaveSpawnItem waveSpawnQueue[64];
+static int waveSpawnCount = 0;
 
 static unsigned rng_seed = 123456789;
 static int rnd(int max) {
@@ -165,7 +186,7 @@ static float rnd_range(float min, float max) {
     return min + (rnd(10000) / 10000.0f) * (max - min);
 }
 
-/* ---------------- particle & effect helpers ---------------- */
+/* ---------------- Particle helpers ---------------- */
 static void spawnSparks(float x, float y, int count, u32 color, float speed) {
     for (int i = 0; i < count; i++) {
         for (int k = 0; k < MAX_SPARKS; k++) {
@@ -202,78 +223,26 @@ static void triggerScreenShake(int amount) {
     if (amount > screen_shake) screen_shake = amount;
 }
 
-static void triggerGridFlash(void) {
-    bg_grid_flash = 1.0f;
-}
-
-static void triggerEMP(void) {
-    if (emps <= 0) return;
-    emps--;
-    sound_play(SFX_EMP);
-    triggerScreenShake(20);
-
-    empWave.active = 1;
-    empWave.x = player_x;
-    empWave.y = player_y;
-    empWave.radius = 10.0f;
-    empWave.maxRadius = 500.0f;
-    empWave.alpha = 1.0f;
-
-    // Clear all enemy bullets
-    for (int i = 0; i < MAX_ENEMY_BULLETS; i++) {
-        if (enemyBullets[i].active) {
-            spawnSparks(enemyBullets[i].x, enemyBullets[i].y, 4, 0xFFCC44FF, 2.0f);
-            enemyBullets[i].active = 0;
-        }
-    }
-
-    // Damage / destroy enemies
+/* ---------------- Words & Target selection ---------------- */
+static int isLetterAlreadyTargeted(char c) {
     for (int i = 0; i < MAX_ENEMIES; i++) {
-        if (enemies[i].active && !enemies[i].dying) {
-            spawnSparks(enemies[i].x, enemies[i].y, 10, 0x4DFED2FF, 3.0f);
-            if (enemies[i].type == ENEMY_MINE || enemies[i].type == ENEMY_MISSLE) {
-                enemies[i].dying = 1;
-                enemies[i].typed = enemies[i].len;
-            } else {
-                // Remove up to 3 typed letters
-                enemies[i].typed += 3;
-                if (enemies[i].typed >= enemies[i].len) {
-                    enemies[i].dying = 1;
-                    enemies[i].typed = enemies[i].len;
-                }
-            }
-            if (enemies[i].dying) {
-                spawnExplosion(enemies[i].x, enemies[i].y, 1.2f);
-                score += enemies[i].len * 15 * multiplier;
-                wordsKilled++;
-                triggerGridFlash();
-                enemies[i].active = 0;
-                if (targetIndex == i) targetIndex = -1;
-            }
-        }
-    }
-}
-
-/* ---------------- wave management ---------------- */
-static int isFirstLetterUsed(char c) {
-    for (int i = 0; i < MAX_ENEMIES; i++) {
-        if (enemies[i].active && !enemies[i].dying) {
-            if (enemies[i].word[0] == c) return 1;
+        if (enemies[i].active && !enemies[i].dying && enemies[i].remaining[0] == c) {
+            return 1;
         }
     }
     return 0;
 }
 
-static const char *pickWord(int minLen, int maxLen) {
-    if (minLen < 2) minLen = 2;
-    if (maxLen > 12) maxLen = 12;
+static const char *getWordWithLength(int minL, int maxL) {
+    if (minL < 2) minL = 2;
+    if (maxL > 12) maxL = 12;
 
-    for (int tries = 0; tries < 100; tries++) {
-        int l = minLen + rnd(maxLen - minLen + 1);
+    for (int tries = 0; tries < 50; tries++) {
+        int l = minL + rnd(maxL - minL + 1);
         int count = WORDS_COUNT_BY_LEN[l];
         if (count > 0) {
             const char *w = WORDS_BY_LEN[l][rnd(count)];
-            if (!isFirstLetterUsed(w[0]) || tries > 60) {
+            if (!isLetterAlreadyTargeted(w[0]) || tries > 30) {
                 return w;
             }
         }
@@ -281,103 +250,138 @@ static const char *pickWord(int minLen, int maxLen) {
     return "ztype";
 }
 
-static void spawnEnemy(int type) {
+/* ---------------- Enemy spawning ---------------- */
+static void spawnEnemyEntity(int type, float x, float y, const char *forced_word) {
     for (int i = 0; i < MAX_ENEMIES; i++) {
         if (!enemies[i].active) {
             Enemy *e = &enemies[i];
             memset(e, 0, sizeof(Enemy));
             e->active = 1;
             e->type = type;
+            e->x = x;
+            e->y = y;
+            e->reticleTimer = 0.0f;
+            e->targeted = 0;
 
-            int minL = 3, maxL = 5;
-            float speed = 0.5f;
-
-            if (type == ENEMY_MISSLE) {
-                minL = 2; maxL = 4; speed = 0.85f;
-            } else if (type == ENEMY_MINE) {
-                minL = 3; maxL = 6; speed = 0.55f;
+            if (type == ENEMY_MINE) {
+                const char *w = forced_word ? forced_word : getWordWithLength(3, 6);
+                strncpy(e->word, w, sizeof(e->word) - 1);
+                strcpy(e->remaining, e->word);
+                e->len = strlen(e->word);
+                float speed = (30.0f / 60.0f) * speedFactor;
+                float angle = atan2f(player_y - y, player_x - x);
+                e->vx = cosf(angle) * speed;
+                e->vy = sinf(angle) * speed;
+                e->angle = 0.0f;
+                e->spin = 2.0f / 60.0f;
             } else if (type == ENEMY_DESTROYER) {
-                minL = 7; maxL = 10; speed = 0.35f;
+                const char *w = forced_word ? forced_word : getWordWithLength(7, 10);
+                strncpy(e->word, w, sizeof(e->word) - 1);
+                strcpy(e->remaining, e->word);
+                e->len = strlen(e->word);
+                float speed = (20.0f / 60.0f) * speedFactor;
+                float deg = rnd_range(67.0f, 90.0f) + (x > GAME_W / 2 ? 22.5f : 0.0f);
+                float angle = deg * (3.14159265f / 180.0f);
+                e->vx = cosf(angle) * speed;
+                e->vy = sinf(angle) * speed;
+                e->angle = angle - 1.570796f;
+                e->shootTimer = 5.0f;
             } else if (type == ENEMY_OPPRESSOR) {
-                minL = 9; maxL = 12; speed = 0.22f;
+                const char *w = forced_word ? forced_word : getWordWithLength(9, 12);
+                strncpy(e->word, w, sizeof(e->word) - 1);
+                strcpy(e->remaining, e->word);
+                e->len = strlen(e->word);
+                float speed = (15.0f / 60.0f) * speedFactor;
+                e->vx = 0.0f;
+                e->vy = speed;
+                e->angle = 0.0f;
+                e->shootTimer = 7.0f;
+            } else if (type == ENEMY_BULLET) {
+                char single[2] = { (char)('a' + rnd(26)), '\0' };
+                strncpy(e->word, single, sizeof(e->word) - 1);
+                strcpy(e->remaining, e->word);
+                e->len = 1;
+                // vx, vy set by caller
             }
-
-            // Speed factor increases with wave
-            speed *= (1.0f + wave * 0.035f);
-
-            const char *w = pickWord(minL, maxL);
-            strncpy(e->word, w, sizeof(e->word) - 1);
-            e->len = strlen(e->word);
-
-            int wordPixelW = gx_text_width_enemy(e->word);
-            int margin = wordPixelW / 2 + 30;
-            e->x = margin + rnd(SCREEN_W - margin * 2);
-            e->y = -40.0f - rnd(30);
-            e->vy = speed;
-            e->vx = rnd_range(-0.1f, 0.1f);
-            e->angle = 0.0f;
-            e->shootTimer = rnd_range(120.0f, 240.0f);
-            e->shootCount = 0;
-
-            waveSpawned++;
             return;
         }
     }
 }
 
-static void startWave(int w) {
-    wave = w;
-    waveSpawned = 0;
-    waveToSpawn = 5 + w * 2;
-    waveSpawnWait = 40;
-    waveClearTimer = 0;
-    targetIndex = -1;
-    sound_play(SFX_SPAWN);
+static void nextWave(void) {
+    wave++;
+    spawnWait = spawnWait * 0.97f;
+    if (spawnWait < 0.2f) spawnWait = 0.2f;
+    speedFactor *= 1.05f;
+
+    waveSpawnCount = 0;
+
+    int mineCount = 3 + (wave / 1);
+    int destroyerCount = wave / 3;
+    int oppressorCount = wave / 7;
+
+    mineCount -= oppressorCount;
+    if (mineCount < 1) mineCount = 1;
+
+    for (int i = 0; i < oppressorCount && waveSpawnCount < 60; i++) {
+        waveSpawnQueue[waveSpawnCount++].type = ENEMY_OPPRESSOR;
+    }
+    for (int i = 0; i < destroyerCount && waveSpawnCount < 60; i++) {
+        waveSpawnQueue[waveSpawnCount++].type = ENEMY_DESTROYER;
+    }
+    for (int i = 0; i < mineCount && waveSpawnCount < 60; i++) {
+        waveSpawnQueue[waveSpawnCount++].type = ENEMY_MINE;
+    }
+
+    // Shuffle wave spawn queue
+    for (int i = waveSpawnCount - 1; i > 0; i--) {
+        int j = rnd(i + 1);
+        WaveSpawnItem tmp = waveSpawnQueue[i];
+        waveSpawnQueue[i] = waveSpawnQueue[j];
+        waveSpawnQueue[j] = tmp;
+    }
+
+    spawnTimer = 0.0f;
+    waveEndTimer = 0.0f;
 }
 
-static void newGame(void) {
-    memset(enemies, 0, sizeof(enemies));
-    memset(plasmas, 0, sizeof(plasmas));
-    memset(sparks, 0, sizeof(sparks));
-    memset(explosions, 0, sizeof(explosions));
-    memset(enemyBullets, 0, sizeof(enemyBullets));
-    memset(&empWave, 0, sizeof(empWave));
+/* ---------------- EMP trigger ---------------- */
+static void triggerEMP(void) {
+    if (emps <= 0) return;
+    emps--;
+    sound_play(SFX_EMP);
+    triggerScreenShake(30);
 
-    score = 0;
-    streak = 0;
-    bestStreak = 0;
-    multiplier = 1;
-    emps = 3;
-    shield = 100;
-    keysHit = 0;
-    keysMiss = 0;
-    wordsKilled = 0;
-    frameCount = 0;
-    targetIndex = -1;
-    reticleTime = 0.0f;
-    newHighScore = 0;
+    empWave.active = 1;
+    empWave.x = player_x + 12.0f;
+    empWave.y = player_y + 12.0f;
+    empWave.radius = 0.0f;
+    empWave.alpha = 1.0f;
 
-    player_x = 320.0f;
-    player_y = 430.0f;
-    player_angle = 0.0f;
-    player_target_angle = 0.0f;
-
-    startWave(1);
-    state = STATE_PLAY;
+    for (int i = 0; i < MAX_ENEMIES; i++) {
+        if (enemies[i].active && !enemies[i].dying) {
+            spawnSparks(enemies[i].x, enemies[i].y, 15, 0x4DFED2FF, 4.0f);
+            spawnExplosion(enemies[i].x, enemies[i].y, 1.2f);
+            enemies[i].dying = 1;
+            enemies[i].active = 0;
+            kills++;
+        }
+    }
+    currentTargetIdx = -1;
 }
 
-/* ---------------- shooting & input ---------------- */
+/* ---------------- Shooting & Input handling ---------------- */
 static void shootPlasma(int enemyIdx) {
     for (int i = 0; i < MAX_BULLETS; i++) {
         if (!plasmas[i].active) {
             plasmas[i].active = 1;
-            plasmas[i].x = player_x;
-            plasmas[i].y = player_y - 12.0f;
+            plasmas[i].x = player_x + 12.0f;
+            plasmas[i].y = player_y + 8.0f;
             plasmas[i].target_enemy = enemyIdx;
             enemies[enemyIdx].inflight++;
 
-            float dx = enemies[enemyIdx].x - player_x;
-            float dy = enemies[enemyIdx].y - player_y;
+            float dx = enemies[enemyIdx].x - (player_x + 12.0f);
+            float dy = enemies[enemyIdx].y - (player_y + 8.0f);
             plasmas[i].angle = atan2f(dy, dx) + 1.570796f;
 
             sound_play(SFX_PLASMA);
@@ -390,127 +394,176 @@ static void shootPlasma(int enemyIdx) {
 
 static void handleKey(char c) {
     if (state != STATE_PLAY) return;
+    idleTimer = 0.0f;
+
     if (c >= 'A' && c <= 'Z') c += 32;
     if (c < 'a' || c > 'z') return;
 
-    // If no target is locked, acquire lowest enemy starting with this letter
-    if (targetIndex < 0) {
+    // 1. If no current target, acquire target
+    if (currentTargetIdx < 0) {
         float lowest_y = -9999.0f;
         int best = -1;
         for (int i = 0; i < MAX_ENEMIES; i++) {
-            if (enemies[i].active && !enemies[i].dying && enemies[i].typed == 0) {
-                if (enemies[i].word[0] == c && enemies[i].y > lowest_y && enemies[i].y > -20.0f) {
+            if (enemies[i].active && !enemies[i].dying && enemies[i].remaining[0] == c) {
+                if (enemies[i].y > lowest_y) {
                     lowest_y = enemies[i].y;
                     best = i;
                 }
             }
         }
         if (best >= 0) {
-            targetIndex = best;
-            reticleTime = 1.0f;
+            currentTargetIdx = best;
+            enemies[best].targeted = 1;
+            enemies[best].reticleTimer = 0.5f;
             sound_play(SFX_TARGET);
         }
     }
 
-    // Check hit on active target
-    if (targetIndex >= 0 && enemies[targetIndex].active) {
-        Enemy *e = &enemies[targetIndex];
-        if (e->word[e->typed] == c) {
-            e->typed++;
-            keysHit++;
+    // 2. Check hit on current target
+    if (currentTargetIdx >= 0 && enemies[currentTargetIdx].active) {
+        Enemy *e = &enemies[currentTargetIdx];
+        if (e->remaining[0] == c) {
+            // Hit!
+            memmove(e->remaining, e->remaining + 1, strlen(e->remaining));
+            hits++;
             streak++;
-            if (streak > bestStreak) bestStreak = streak;
+            if (streak > longestStreak) longestStreak = streak;
 
-            // Multiplier steps
             int oldMul = multiplier;
             if (streak >= 50) multiplier = 3;
-            else if (streak >= 25) multiplier = 2;
+            else if (streak >= 20) multiplier = 2;
             else multiplier = 1;
 
             if (multiplier > oldMul) {
+                multiplierTimer = 2.0f;
+                multiplierIndex = multiplier - 2;
                 if (multiplier == 2) sound_play(SFX_MULTI_2);
                 else if (multiplier == 3) sound_play(SFX_MULTI_3);
             }
 
-            score += 10 * multiplier;
+            score += multiplier;
 
-            // Orient player towards target
-            float dx = e->x - player_x;
-            float dy = e->y - player_y;
+            float dx = e->x - (player_x + 12.0f);
+            float dy = e->y - (player_y + 12.0f);
             player_target_angle = atan2f(dx, -dy);
 
-            shootPlasma(targetIndex);
+            shootPlasma(currentTargetIdx);
 
-            if (e->typed >= e->len) {
+            if (e->remaining[0] == '\0') {
                 e->dying = 1;
-                targetIndex = -1;
+                currentTargetIdx = -1;
             }
             return;
         }
     }
 
     // Miss!
-    keysMiss++;
+    misses++;
     streak = 0;
     multiplier = 1;
     sound_play(SFX_CLICK);
     player_anim_frame = 4;
     player_anim_timer = 6;
-    spawnSparks(player_x, player_y - 10.0f, 6, 0xFF4444FF, 2.0f);
+    spawnSparks(player_x + 12.0f, player_y + 4.0f, 6, 0xFF4444FF, 2.0f);
 }
 
-/* ---------------- update logic ---------------- */
+/* ---------------- Player Death ---------------- */
+static void killPlayer(void) {
+    state = STATE_OVER;
+    sound_play(SFX_EXPLODE_P);
+    spawnExplosion(player_x + 12.0f, player_y + 12.0f, 2.8f);
+    spawnSparks(player_x + 12.0f, player_y + 12.0f, 60, 0x4DFED2FF, 6.0f);
+    triggerScreenShake(25);
+
+    if (score > hiscore) {
+        hiscore = score;
+        isPersonalBest = 1;
+        hsSave();
+    } else {
+        isPersonalBest = 0;
+    }
+}
+
+/* ---------------- Enemy kill ---------------- */
 static void killEnemy(int i) {
     Enemy *e = &enemies[i];
     e->active = 0;
-    wordsKilled++;
-    score += e->len * 20 * multiplier;
-    triggerGridFlash();
+    kills++;
+    lastKillTimer = 0.3f;
 
-    if (e->type == ENEMY_MISSLE) {
-        sound_play(SFX_EXPLODE_S);
-        spawnExplosion(e->x, e->y, 0.9f);
-        spawnSparks(e->x, e->y, 16, 0x55FFAAFF, 3.0f);
-        triggerScreenShake(4);
-    } else if (e->type == ENEMY_MINE) {
+    if (e->type == ENEMY_MINE) {
         sound_play(SFX_EXPLODE_M);
         spawnExplosion(e->x, e->y, 1.1f);
-        spawnSparks(e->x, e->y, 22, 0xFFCC44FF, 3.5f);
-        triggerScreenShake(6);
-    } else {
+        spawnSparks(e->x, e->y, 20, 0xFFCC44FF, 3.5f);
+        triggerScreenShake(5);
+    } else if (e->type == ENEMY_DESTROYER) {
         sound_play(SFX_EXPLODE_L);
         spawnExplosion(e->x, e->y, 1.8f);
-        spawnSparks(e->x, e->y, 35, 0xFF8844FF, 4.5f);
-        spawnSparks(e->x, e->y, 20, 0xFFFFFFFF, 3.0f);
-        triggerScreenShake(12);
+        spawnSparks(e->x, e->y, 40, 0xFF8844FF, 4.5f);
+        triggerScreenShake(10);
+    } else if (e->type == ENEMY_OPPRESSOR) {
+        sound_play(SFX_EXPLODE_L);
+        spawnExplosion(e->x, e->y, 2.2f);
+        spawnSparks(e->x, e->y, 50, 0xFF4422FF, 5.0f);
+        triggerScreenShake(20);
+    } else if (e->type == ENEMY_BULLET) {
+        sound_play(SFX_EXPLODE_S);
+        spawnExplosion(e->x, e->y, 0.8f);
+        spawnSparks(e->x, e->y, 10, 0x55FFAAFF, 2.5f);
     }
 
-    if (targetIndex == i) targetIndex = -1;
+    if (currentTargetIdx == i) currentTargetIdx = -1;
 }
 
+/* ---------------- Game state initialization ---------------- */
+static void setGame(void) {
+    state = STATE_INTRO_TRANSITION;
+    titleTransitionTime = 0.0f;
+    sound_play(SFX_SPAWN);
+
+    memset(enemies, 0, sizeof(enemies));
+    memset(plasmas, 0, sizeof(plasmas));
+    memset(sparks, 0, sizeof(sparks));
+    memset(explosions, 0, sizeof(explosions));
+    memset(&empWave, 0, sizeof(empWave));
+
+    wave = 0;
+    score = 0;
+    streak = 0;
+    longestStreak = 0;
+    hits = 0;
+    misses = 0;
+    kills = 0;
+    multiplier = 1;
+    emps = 3;
+    isPersonalBest = 0;
+    multiplierTimer = 0.0f;
+    multiplierIndex = 0;
+    idleTimer = 0.0f;
+    waveEndTimer = 0.0f;
+    spawnWait = 0.7f;
+    speedFactor = 1.0f;
+
+    player_x = 234.0f;
+    player_y = 400.0f;
+    player_angle = 0.0f;
+    player_target_angle = 0.0f;
+    currentTargetIdx = -1;
+
+    nextWave();
+}
+
+/* ---------------- Update ---------------- */
 static void update(void) {
-    frameCount++;
+    // Scrolling starfield
+    bg_stars_scroll += 10.0f / 60.0f;
+    if (bg_stars_scroll >= 512.0f) bg_stars_scroll -= 512.0f;
 
-    // Background scrolls
-    bg_stars_scroll += 0.8f;
-    if (bg_stars_scroll >= 480.0f) bg_stars_scroll -= 480.0f;
-
-    // Grid flash decays
-    if (bg_grid_flash > 0.1f) {
-        bg_grid_flash -= 0.04f;
-        if (bg_grid_flash < 0.1f) bg_grid_flash = 0.1f;
-    }
-
-    // Screen shake decays
     if (screen_shake > 0) screen_shake--;
+    if (lastKillTimer > 0.0f) lastKillTimer -= 1.0f / 60.0f;
+    if (multiplierTimer > 0.0f) multiplierTimer -= 1.0f / 60.0f;
 
-    // Reticle animation decays
-    if (reticleTime > 0.0f) {
-        reticleTime -= 0.035f;
-        if (reticleTime < 0.0f) reticleTime = 0.0f;
-    }
-
-    // Update sparks
+    // Sparks update
     for (int i = 0; i < MAX_SPARKS; i++) {
         if (sparks[i].active) {
             sparks[i].x += sparks[i].vx;
@@ -521,7 +574,7 @@ static void update(void) {
         }
     }
 
-    // Update explosions
+    // Explosions update
     for (int i = 0; i < MAX_EXPLOSIONS; i++) {
         if (explosions[i].active) {
             explosions[i].frame += 0.25f;
@@ -529,14 +582,28 @@ static void update(void) {
         }
     }
 
-    // Update EMP wave
+    // EMP wave update
     if (empWave.active) {
         empWave.radius += 12.0f;
-        empWave.alpha = 1.0f - (empWave.radius / empWave.maxRadius);
-        if (empWave.radius >= empWave.maxRadius) empWave.active = 0;
+        empWave.alpha = 1.0f - (empWave.radius / 300.0f);
+        if (empWave.radius >= 300.0f) empWave.active = 0;
+    }
+
+    if (state == STATE_INTRO_TRANSITION) {
+        titleTransitionTime += 1.0f / 60.0f;
+        if (titleTransitionTime >= 2.0f) {
+            titleTransitionTime = 2.0f;
+            player_y = 642.0f;
+            state = STATE_PLAY;
+        } else {
+            player_y = inOutBack(titleTransitionTime, 400.0f, 242.0f, 2.0f);
+        }
+        return;
     }
 
     if (state != STATE_PLAY) return;
+
+    idleTimer += 1.0f / 60.0f;
 
     // Player animation timer
     if (player_anim_timer > 0) {
@@ -549,27 +616,18 @@ static void update(void) {
         }
     }
 
-    // Smooth player rotation
+    // Slerp player angle
     float dAngle = player_target_angle - player_angle;
     player_angle += dAngle * 0.18f;
 
-    // Enemy wave spawning
-    if (waveSpawned < waveToSpawn) {
-        if (--waveSpawnWait <= 0) {
-            int type = ENEMY_MINE;
-            int r = rnd(100);
-            if (wave >= 7 && (r < 15 || (wave % 7 == 0 && waveSpawned == 0))) {
-                type = ENEMY_OPPRESSOR;
-            } else if (wave >= 3 && (r < 35 || (wave % 3 == 0 && waveSpawned == 0))) {
-                type = ENEMY_DESTROYER;
-            } else if (wave >= 2 && r < 65) {
-                type = ENEMY_MISSLE;
-            } else {
-                type = ENEMY_MINE;
-            }
-            spawnEnemy(type);
-            waveSpawnWait = 45 - wave * 2;
-            if (waveSpawnWait < 18) waveSpawnWait = 18;
+    // Spawn queue processing
+    if (waveSpawnCount > 0) {
+        spawnTimer += 1.0f / 60.0f;
+        if (spawnTimer >= spawnWait) {
+            spawnTimer = 0.0f;
+            WaveSpawnItem item = waveSpawnQueue[--waveSpawnCount];
+            float x = rnd_range(20.0f, GAME_W - 20.0f);
+            spawnEnemyEntity(item.type, x, -30.0f, NULL);
         }
     }
 
@@ -582,101 +640,40 @@ static void update(void) {
 
             e->x += e->vx;
             e->y += e->vy;
-            if (e->type == ENEMY_MINE) {
-                e->angle += 0.04f;
+            e->angle += e->spin;
+
+            if (e->reticleTimer > 0.0f) {
+                e->reticleTimer -= 1.0f / 60.0f;
+                if (e->reticleTimer < 0.0f) e->reticleTimer = 0.0f;
             }
 
-            // Word label margins
-            int hw = gx_text_width_enemy(e->word) / 2 + 10;
-            if (e->x < hw) { e->x = hw; e->vx = -e->vx; }
-            if (e->x > SCREEN_W - hw) { e->x = SCREEN_W - hw; e->vx = -e->vx; }
-
-            // Firing behavior for Destroyer / Oppressor
+            // Oppressor / Destroyer shooting
             if (!e->dying && e->y > 30.0f) {
-                if (--e->shootTimer <= 0) {
+                e->shootTimer -= 1.0f / 60.0f;
+                if (e->shootTimer <= 0.0f) {
                     if (e->type == ENEMY_DESTROYER) {
-                        // Spawn missile
-                        spawnEnemy(ENEMY_MISSLE);
-                        e->shootTimer = rnd_range(160.0f, 260.0f);
+                        e->shootTimer = 5.0f;
+                        spawnEnemyEntity(ENEMY_BULLET, e->x, e->y + 20.0f, NULL);
                     } else if (e->type == ENEMY_OPPRESSOR) {
-                        // Fire bullets towards player
-                        for (int b = 0; b < MAX_ENEMY_BULLETS; b++) {
-                            if (!enemyBullets[b].active) {
-                                enemyBullets[b].active = 1;
-                                enemyBullets[b].x = e->x;
-                                enemyBullets[b].y = e->y + 35.0f;
-                                float dx = player_x - e->x + rnd_range(-40.0f, 40.0f);
-                                float dy = player_y - (e->y + 35.0f);
-                                float d = sqrtf(dx * dx + dy * dy);
-                                enemyBullets[b].vx = (dx / d) * 2.2f;
-                                enemyBullets[b].vy = (dy / d) * 2.2f;
-                                break;
-                            }
+                        e->shootTimer = 7.0f;
+                        for (int b = 0; b < 8; b++) {
+                            float deg = 40.0f + b * (100.0f / 7.0f);
+                            float rad = deg * (3.14159265f / 180.0f);
+                            float bx = e->x + cosf(rad) * 21.0f;
+                            float by = e->y + 48.0f + sinf(rad) * 21.0f;
+                            spawnEnemyEntity(ENEMY_BULLET, bx, by, NULL);
                         }
-                        e->shootTimer = rnd_range(90.0f, 150.0f);
                     }
                 }
             }
 
-            // Enemy reaches bottom
-            if (e->y > 440.0f) {
-                shield -= 25;
-                streak = 0;
-                multiplier = 1;
-                triggerScreenShake(18);
-                sound_play(SFX_EXPLODE_L);
-                spawnExplosion(e->x, e->y, 1.5f);
-                spawnSparks(e->x, e->y, 30, 0xFF4422FF, 4.0f);
-                e->active = 0;
-                if (targetIndex == i) targetIndex = -1;
-
-                if (shield <= 0) {
-                    shield = 0;
-                    state = STATE_OVER;
-                    sound_play(SFX_EXPLODE_P);
-                    spawnExplosion(player_x, player_y, 2.5f);
-                    spawnSparks(player_x, player_y, 60, 0x4DFED2FF, 6.0f);
-                    triggerScreenShake(30);
-
-                    if (score > hiscore) {
-                        hiscore = score;
-                        newHighScore = 1;
-                        hsSave();
-                    }
-                }
-            }
-        }
-    }
-
-    // Update enemy bullets
-    for (int b = 0; b < MAX_ENEMY_BULLETS; b++) {
-        if (enemyBullets[b].active) {
-            enemyBullets[b].x += enemyBullets[b].vx;
-            enemyBullets[b].y += enemyBullets[b].vy;
-
-            // Hit player
-            float dx = enemyBullets[b].x - player_x;
-            float dy = enemyBullets[b].y - player_y;
-            if (sqrtf(dx * dx + dy * dy) < 18.0f) {
-                enemyBullets[b].active = 0;
-                shield -= 10;
-                streak = 0;
-                multiplier = 1;
-                triggerScreenShake(8);
-                sound_play(SFX_HIT);
-                spawnSparks(player_x, player_y, 12, 0xFF6644FF, 3.0f);
-                if (shield <= 0) {
-                    shield = 0;
-                    state = STATE_OVER;
-                    sound_play(SFX_EXPLODE_P);
-                    spawnExplosion(player_x, player_y, 2.5f);
-                    triggerScreenShake(30);
-                    if (score > hiscore) { hiscore = score; newHighScore = 1; hsSave(); }
-                }
-            }
-
-            if (enemyBullets[b].y > 490.0f || enemyBullets[b].x < -20.0f || enemyBullets[b].x > 660.0f) {
-                enemyBullets[b].active = 0;
+            // Check collision with player (One-hit death!)
+            float pdx = (player_x + 12.0f) - e->x;
+            float pdy = (player_y + 12.0f) - e->y;
+            float pdist = sqrtf(pdx * pdx + pdy * pdy);
+            if (pdist < 22.0f || e->y >= 680.0f) {
+                killPlayer();
+                return;
             }
         }
     }
@@ -705,139 +702,103 @@ static void update(void) {
                     killEnemy(eIdx);
                 }
             } else {
-                p->x += (dx / d) * 14.0f;
-                p->y += (dy / d) * 14.0f;
+                p->x += (dx / d) * (800.0f / 60.0f);
+                p->y += (dy / d) * (800.0f / 60.0f);
             }
         }
     }
 
     // Wave clear check
-    if (waveSpawned >= waveToSpawn && aliveCount == 0) {
-        if (waveClearTimer == 0) {
-            waveClearTimer = 120; // 2 seconds banner
-            score += 150 * wave;
-            if (emps < 3) emps++;
-            if (shield < 100) { shield += 20; if (shield > 100) shield = 100; }
+    if (waveSpawnCount == 0 && aliveCount == 0) {
+        if (waveEndTimer <= 0.0f) {
+            waveEndTimer = 2.0f;
         } else {
-            if (--waveClearTimer == 0) {
-                startWave(wave + 1);
+            waveEndTimer -= 1.0f / 60.0f;
+            if (waveEndTimer <= 0.0f) {
+                nextWave();
             }
         }
     }
 }
 
-/* ---------------- render functions ---------------- */
-static void drawBackground(void) {
-    // 1. Scrolling starfield
+/* ---------------- Render ---------------- */
+static void renderBackground(void) {
+    // 1. Starfield
     gx_bind_stars();
-    gx_draw_sprite(0, bg_stars_scroll - 480.0f, SCREEN_W, 480, 0, 0, 1, 1, 0xFFFFFFFF);
-    gx_draw_sprite(0, bg_stars_scroll, SCREEN_W, 480, 0, 0, 1, 1, 0xFFFFFFFF);
+    gx_draw_sprite(0, bg_stars_scroll - 512.0f, GAME_W, 512, 0, 0, 1, 1, 0xFFFFFFFF);
+    gx_draw_sprite(0, bg_stars_scroll, GAME_W, 512, 0, 0, 1, 1, 0xFFFFFFFF);
+    gx_draw_sprite(0, bg_stars_scroll + 512.0f, GAME_W, 512, 0, 0, 1, 1, 0xFFFFFFFF);
 
     // 2. Space gradient overlay (alpha 0.8)
-    gx_draw_gradient(0, 0, SCREEN_W, SCREEN_H, 0x031214D0, 0x234442D0);
+    gx_draw_gradient(0, 0, GAME_W, GAME_H, 0x031214D0, 0x234442D0);
 
-    // 3. Repeating cyber grid with flash
+    // 3. Cyber grid with kill flash
     gx_bind_grid();
     gx_set_blend_additive();
-    u8 grid_alpha = (u8)(bg_grid_flash * 255.0f);
-    u32 grid_col = (0xFFFFFF00) | grid_alpha;
-    gx_draw_sprite(0, 0, SCREEN_W, SCREEN_H, 0, 0, 1.2f, 1.0f, grid_col);
+    float alpha_f = (lastKillTimer > 0.0f) ? (lastKillTimer * 3.33f * 0.3f + 0.1f) : 0.1f;
+    u8 grid_alpha = (u8)(alpha_f * 255.0f);
+    gx_draw_sprite(0, 0, GAME_W, GAME_H, 0, 0, 1.0f, 1.5f, (0xFFFFFF00) | grid_alpha);
     gx_set_blend_alpha();
 }
 
-static void drawPlayer(void) {
+static void renderPlayer(void) {
     gx_set_blend_additive();
-
-    // 1. Exhaust trail puffs
-    for (int i = 0; i < 8; i++) {
-        float ey = (i * 18 + frameCount * 3) % 80;
-        float ex = player_x - 1.0f + sinf(frameCount * 0.2f + i) * 2.0f;
-        float alpha = (ey < 10) ? (ey / 10.0f) : (1.0f - (ey / 80.0f));
-        u8 a = (u8)(alpha * 160.0f);
-        gx_draw_sprite(ex - 6.0f, player_y + 10.0f + ey, 12, 16,
-                       SPRITE_EXHAUST_U0, SPRITE_EXHAUST_V0,
-                       SPRITE_EXHAUST_U1, SPRITE_EXHAUST_V1,
-                       (0x4DFED200) | a);
-    }
-
-    // 2. Ship frame (24x24 in sprite sheet at Y=SPRITE_SHIP_Y)
     float u0 = (SPRITE_SHIP_X + player_anim_frame * 24.0f) / 512.0f;
     float v0 = SPRITE_SHIP_V0;
     float u1 = (SPRITE_SHIP_X + (player_anim_frame + 1) * 24.0f) / 512.0f;
     float v1 = SPRITE_SHIP_V1;
 
-    gx_draw_sprite_rot(player_x, player_y, 36, 36, player_angle,
+    gx_draw_sprite_rot(player_x + 12.0f, player_y + 12.0f, 32, 32, player_angle,
                        u0, v0, u1, v1, 0xFFFFFFFF);
-
     gx_set_blend_alpha();
 }
 
-static void drawTargetReticle(void) {
-    if (targetIndex < 0 || !enemies[targetIndex].active) return;
-    Enemy *e = &enemies[targetIndex];
-
-    gx_set_blend_additive();
-
-    // Subtle cyan laser beam from player to target
-    gx_draw_line(player_x, player_y - 12.0f, e->x, e->y, 1.5f, 0x4DFED244);
-
-    // Zooming reticle
-    float scale = (reticleTime > 0.0f) ? (0.45f + reticleTime * reticleTime * 2.0f) : 0.45f;
-    float angle = (reticleTime > 0.0f) ? (reticleTime * 3.14159f) : (frameCount * 0.02f);
-    float size = 256.0f * scale;
-
-    u8 a = (reticleTime > 0.0f) ? (u8)(sqrtf(1.0f - reticleTime) * 255.0f) : 180;
-    gx_draw_sprite_rot(e->x, e->y, size, size, angle,
-                       SPRITE_RETICLE_U0, SPRITE_RETICLE_V0,
-                       SPRITE_RETICLE_U1, SPRITE_RETICLE_V1,
-                       (0x4DFED200) | a);
-
-    gx_set_blend_alpha();
-}
-
-static void drawEnemies(void) {
+static void renderEnemies(void) {
     gx_bind_sprites();
     gx_set_blend_additive();
 
-    // 1. Draw enemy ships
+    // 1. Enemy sprites
     for (int i = 0; i < MAX_ENEMIES; i++) {
         if (enemies[i].active) {
             Enemy *e = &enemies[i];
-            if (e->type == ENEMY_MISSLE) {
-                gx_draw_sprite_rot(e->x, e->y, 24, 30, 3.14159f,
-                                   SPRITE_MISSLE_U0, SPRITE_MISSLE_V0,
-                                   SPRITE_MISSLE_U1, SPRITE_MISSLE_V1,
-                                   0xFFFFFFFF);
-            } else if (e->type == ENEMY_MINE) {
-                gx_draw_sprite_rot(e->x, e->y, 34, 34, e->angle,
+            if (e->type == ENEMY_MINE) {
+                gx_draw_sprite_rot(e->x, e->y, 32, 32, e->angle,
                                    SPRITE_MINE_U0, SPRITE_MINE_V0,
                                    SPRITE_MINE_U1, SPRITE_MINE_V1,
                                    0xFFFFFFFF);
             } else if (e->type == ENEMY_DESTROYER) {
-                gx_draw_sprite(e->x - 24, e->y - 30, 48, 60,
-                               SPRITE_DESTROYER_U0, SPRITE_DESTROYER_V0,
-                               SPRITE_DESTROYER_U1, SPRITE_DESTROYER_V1,
-                               0xFFFFFFFF);
+                gx_draw_sprite_rot(e->x, e->y, 43, 58, e->angle,
+                                   SPRITE_DESTROYER_U0, SPRITE_DESTROYER_V0,
+                                   SPRITE_DESTROYER_U1, SPRITE_DESTROYER_V1,
+                                   0xFFFFFFFF);
             } else if (e->type == ENEMY_OPPRESSOR) {
-                gx_draw_sprite(e->x - 36, e->y - 45, 72, 90,
+                gx_draw_sprite(e->x - 34, e->y - 44, 68, 88,
                                SPRITE_OPPRESSOR_U0, SPRITE_OPPRESSOR_V0,
                                SPRITE_OPPRESSOR_U1, SPRITE_OPPRESSOR_V1,
                                0xFFFFFFFF);
+            } else if (e->type == ENEMY_BULLET) {
+                gx_draw_sprite(e->x - 10, e->y - 12, 20, 24,
+                               SPRITE_BULLET_U0, SPRITE_BULLET_V0,
+                               SPRITE_BULLET_U1, SPRITE_BULLET_V1,
+                               0xFFAA33FF);
+            }
+
+            // Reticle animation (initial lock-on only)
+            if (e->reticleTimer > 0.0f) {
+                float d = (0.5f - e->reticleTimer) / 0.5f; // 0 -> 1
+                float scale = (1.0f - d) * (1.0f - d) * 4.0f;
+                float angle = d * 3.14159265f;
+                float sz = 128.0f * scale;
+                u8 ra = (u8)(sqrtf(d) * 255.0f);
+                gx_draw_sprite_rot(e->x, e->y, sz, sz, angle,
+                                   SPRITE_RETICLE_U0, SPRITE_RETICLE_V0,
+                                   SPRITE_RETICLE_U1, SPRITE_RETICLE_V1,
+                                   (0x4DFED200) | ra);
             }
         }
     }
 
-    // 2. Draw enemy bullets
-    for (int b = 0; b < MAX_ENEMY_BULLETS; b++) {
-        if (enemyBullets[b].active) {
-            gx_draw_sprite(enemyBullets[b].x - 10, enemyBullets[b].y - 12, 20, 24,
-                           SPRITE_BULLET_U0, SPRITE_BULLET_V0,
-                           SPRITE_BULLET_U1, SPRITE_BULLET_V1,
-                           0xFFAA33FF);
-        }
-    }
-
-    // 3. Draw plasma bolts
+    // 2. Plasmas
     for (int i = 0; i < MAX_BULLETS; i++) {
         if (plasmas[i].active) {
             gx_draw_sprite_rot(plasmas[i].x, plasmas[i].y, 32, 32, plasmas[i].angle,
@@ -847,7 +808,7 @@ static void drawEnemies(void) {
         }
     }
 
-    // 4. Draw explosions
+    // 3. Explosions
     for (int i = 0; i < MAX_EXPLOSIONS; i++) {
         if (explosions[i].active) {
             int f = (int)explosions[i].frame;
@@ -862,7 +823,7 @@ static void drawEnemies(void) {
         }
     }
 
-    // 5. Draw sparks
+    // 4. Sparks
     for (int i = 0; i < MAX_SPARKS; i++) {
         if (sparks[i].active) {
             float a = sparks[i].life / sparks[i].maxLife;
@@ -876,7 +837,7 @@ static void drawEnemies(void) {
         }
     }
 
-    // 6. Draw EMP shockwave
+    // 5. EMP wave
     if (empWave.active) {
         u8 a = (u8)(empWave.alpha * 255.0f);
         float sz = empWave.radius * 2.0f;
@@ -888,65 +849,58 @@ static void drawEnemies(void) {
 
     gx_set_blend_alpha();
 
-    // 7. Draw enemy word labels (normal alpha blend)
+    // 6. Word labels
     for (int i = 0; i < MAX_ENEMIES; i++) {
-        if (enemies[i].active && !enemies[i].dying) {
+        if (enemies[i].active && !enemies[i].dying && enemies[i].remaining[0] != '\0') {
             Enemy *e = &enemies[i];
-            int textW = gx_text_width_enemy(e->word);
-            int boxX = (int)(e->x - textW * 0.5f);
-            int boxY = (int)(e->y + 22.0f);
+            int w = gx_text_width_enemy(e->word);
+            float x = e->x - 6.0f;
+            if (x < (float)(w + 2)) x = (float)(w + 2);
+            if (x > (float)(GAME_W - 1)) x = (float)(GAME_W - 1);
 
-            if (boxX < 10) boxX = 10;
-            if (boxX + textW + 8 > SCREEN_W - 10) boxX = SCREEN_W - 10 - textW - 8;
+            float y = e->y + 16.0f;
+            if (y < 2.0f) y = 2.0f;
+            if (y > (float)(GAME_H - 19)) y = (float)(GAME_H - 19);
 
-            // Semi-transparent dark background card
-            gx_draw_rect(boxX - 4, boxY - 2, textW + 8, 20, 0x000000C0);
+            float bx = x - w - 2.0f;
+            float by = y - 1.0f;
 
-            // Active / targeted border highlight
-            if (i == targetIndex) {
-                gx_draw_rect(boxX - 4, boxY + 18, textW + 8, 2, 0x4DFED2FF);
-            }
+            // Semi-transparent black box
+            gx_draw_rect(bx, by + 5.0f, w + 8, 24, 0x000000C0);
 
-            // Word with typed letters in orange and untyped letters in white
-            gx_draw_text_enemy(boxX, boxY, e->word, e->typed);
+            // Right-aligned word: white for untyped, orange for targeted
+            gx_draw_text_enemy_right(x + 2.0f, y + 6.0f, e->remaining, e->targeted);
         }
     }
 }
 
-static void drawHUD(void) {
-    char buf[64];
-
-    // Score & Wave (top-left)
-    snprintf(buf, sizeof(buf), "SCORE %06d", score);
-    gx_draw_text_ui(24, 16, buf, FONT_UI_18_WHITE, 0xFFFFFFFF);
-
-    snprintf(buf, sizeof(buf), "WAVE %03d", wave);
-    gx_draw_text_ui(24, 38, buf, FONT_UI_18_WHITE, 0x4DFED2FF);
-
-    // Multiplier progress bar (top-center)
+static void renderHUD(void) {
     gx_bind_sprites();
+
+    // Blue streak progress bar along the bottom
     if (streak > 0) {
-        float barLen = (1.0f - 75.0f / (75.0f + streak * 2.0f)) * 220.0f;
-        float barX = (SCREEN_W - 220.0f) * 0.5f;
-        gx_draw_sprite(barX, 24, barLen, 3,
+        float multiLength = 1.0f - (75.0f / (75.0f + streak * 2.0f));
+        gx_draw_sprite(0, 718.0f, GAME_W * multiLength, 2.0f,
                        SPRITE_BAR_BLUE_U0, SPRITE_BAR_BLUE_V0,
                        SPRITE_BAR_BLUE_U1, SPRITE_BAR_BLUE_V1,
                        0x4DFED2FF);
 
-        // Multiplier indicator (x2 or x3 badge)
-        if (multiplier >= 2) {
-            int tile = (multiplier == 3) ? 1 : 0;
-            float mu0 = (SPRITE_MULTI_INDICATOR_X + tile * 32.0f) / 512.0f;
+        // Multiplier indicator (x2 / x3)
+        if (multiplierTimer > 0.0f) {
+            float a = multiplierTimer / 2.0f;
+            if (a > 1.0f) a = 1.0f;
+            u8 ma = (u8)(a * 255.0f);
+            float mu0 = (SPRITE_MULTI_INDICATOR_X + multiplierIndex * 32.0f) / 512.0f;
             float mv0 = SPRITE_MULTI_INDICATOR_V0;
-            float mu1 = (SPRITE_MULTI_INDICATOR_X + (tile + 1) * 32.0f) / 512.0f;
+            float mu1 = (SPRITE_MULTI_INDICATOR_X + (multiplierIndex + 1) * 32.0f) / 512.0f;
             float mv1 = SPRITE_MULTI_INDICATOR_V1;
 
-            gx_draw_sprite(barX + barLen - 16, 6, 32, 18,
-                           mu0, mv0, mu1, mv1, 0xFFFFFFFF);
+            gx_draw_sprite(GAME_W * multiLength - 22.5f, 701.5f, 24.0f, 14.0f,
+                           mu0, mv0, mu1, mv1, (0xFFFFFF00) | ma);
         }
     }
 
-    // EMP button icons (top-right)
+    // EMP button icon at bottom right
     int empTile = emps;
     if (empTile < 0) empTile = 0;
     if (empTile > 3) empTile = 3;
@@ -954,184 +908,210 @@ static void drawHUD(void) {
     float ev0 = SPRITE_EMP_BUTTONS_V0;
     float eu1 = (SPRITE_EMP_BUTTONS_X + (empTile + 1) * 34.0f) / 512.0f;
     float ev1 = SPRITE_EMP_BUTTONS_V1;
-    gx_draw_sprite(SCREEN_W - 56, 14, 34, 40, eu0, ev0, eu1, ev1,
-                   (emps > 0) ? 0xFFFFFFFF : 0x888888AA);
+    u8 empAlpha = (emps > 0) ? 0xFF : 0xB2; // 0.7 alpha when 0
+    gx_draw_sprite(436.5f, 672.0f, 26.0f, 30.0f, eu0, ev0, eu1, ev1, (0xFFFFFF00) | empAlpha);
 
-    // Shield integrity bar (bottom-left)
-    gx_draw_rect(24, SCREEN_H - 18, 120, 6, 0x112233C0);
-    u32 shieldCol = (shield > 50) ? 0x4DFED2FF : ((shield > 25) ? 0xFFAA33FF : 0xFF3333FF);
-    gx_draw_rect(24, SCREEN_H - 18, (120.0f * shield) / 100.0f, 6, shieldCol);
-    gx_draw_text_ui(152, SCREEN_H - 22, "SHIELD", FONT_UI_18_WHITE, 0x8899AAFF);
+    // Subtle pause icon at top-left (alpha 0.1)
+    gx_draw_sprite(21.0f, 21.0f, 14.0f, 16.0f,
+                   SPRITE_PAUSE_U0, SPRITE_PAUSE_V0,
+                   SPRITE_PAUSE_U1, SPRITE_PAUSE_V1,
+                   0xFFFFFF1A);
 
-    // Wave Clear Banner
-    if (waveClearTimer > 0) {
-        float t = waveClearTimer / 120.0f;
-        float bannerY = 180.0f + sinf(t * 3.14159f) * 10.0f;
-        snprintf(buf, sizeof(buf), "WAVE %03d CLEAR", wave);
-        gx_draw_text_ui_center(SCREEN_W / 2, bannerY, buf, FONT_UI_36_BLUE, 0xFFFFFFFF);
+    // Wave clear banner (sliding and fading)
+    if (waveEndTimer > 0.0f) {
+        float d = 2.0f - waveEndTimer; // 0 -> 2
+        float a = (d > 1.7f) ? (2.0f - d) / 0.3f : (d < 1.0f ? d : 1.0f);
+        if (a < 0.0f) a = 0.0f;
+        if (a > 1.0f) a = 1.0f;
+        u8 alpha = (u8)(a * 255.0f);
+
+        float ys = 276.0f + (d < 1.0f ? cosf(1.0f - d) * 250.0f : 0.0f);
+
+        char wbuf[32];
+        snprintf(wbuf, sizeof(wbuf), "WAVE %03d CLEAR", wave);
+        gx_draw_text_ui(32.0f, ys, wbuf, FONT_UI_36_BLUE, (0xFFFFFF00) | alpha);
 
         gx_bind_sprites();
-        gx_draw_sprite((SCREEN_W - 320) / 2, bannerY + 44, 320, 3,
+        gx_draw_sprite(32.0f, ys + 48.0f, 276.0f, 2.0f,
                        SPRITE_BAR_BLUE_U0, SPRITE_BAR_BLUE_V0,
                        SPRITE_BAR_BLUE_U1, SPRITE_BAR_BLUE_V1,
-                       0x4DFED2FF);
+                       (0x4DFED200) | alpha);
 
-        snprintf(buf, sizeof(buf), "SCORE: %06d", score);
-        gx_draw_text_ui_center(SCREEN_W / 2, bannerY + 54, buf, FONT_UI_18_WHITE, 0xFFFFFFFF);
+        char sbuf[32];
+        snprintf(sbuf, sizeof(sbuf), "SCORE: %06d", score);
+        gx_draw_text_ui(32.0f, (ys * 1.2f) + 10.0f, sbuf, FONT_UI_18_WHITE, (0xFFFFFF00) | alpha);
+    }
+
+    // Idle hint
+    if (idleTimer > 8.0f) {
+        float aa = (idleTimer - 8.0f);
+        if (aa > 1.0f) aa = 1.0f;
+        float pulse = (sinf(idleTimer * 4.0f) * 0.25f + 0.75f) * aa;
+        u8 ha = (u8)(pulse * 255.0f);
+        gx_draw_text_ui_center(GAME_W / 2, GAME_H - 180, "Type the words to shoot!\nENTER for EMP",
+                               FONT_UI_18_WHITE, (0xFFFFFF00) | ha);
     }
 }
 
-static void drawTitleScreen(void) {
-    drawBackground();
+static void renderTitle(void) {
+    renderBackground();
 
+    float trans = (state == STATE_INTRO_TRANSITION) ? (titleTransitionTime / 2.0f) : 0.0f;
+    float titleAlpha = 1.0f - trans;
+    if (titleAlpha < 0.0f) titleAlpha = 0.0f;
+    u8 ta = (u8)(titleAlpha * 255.0f);
+
+    float phobosY = 60.0f - inOutQuad(trans, 0.0f, 2100.0f, 1.0f);
+    float logoY = 112.5f - inOutQuad(trans, 0.0f, 750.0f, 1.0f);
+    float newGameY = inOutQuad(trans, 555.0f, 1200.0f, 1.0f);
+
+    // 1. PhobosLab
     gx_bind_sprites();
     gx_set_blend_additive();
-
-    // 1. PhobosLab byline banner
-    gx_draw_sprite((SCREEN_W - SPRITE_PHOBOSLAB_W) / 2, 45,
-                   SPRITE_PHOBOSLAB_W, SPRITE_PHOBOSLAB_H,
+    gx_draw_sprite((GAME_W - 154.5f) / 2.0f, phobosY, 154.5f, 18.0f,
                    SPRITE_PHOBOSLAB_U0, SPRITE_PHOBOSLAB_V0,
                    SPRITE_PHOBOSLAB_U1, SPRITE_PHOBOSLAB_V1,
-                   0xFFFFFFFF);
+                   (0xFFFFFF00) | ta);
 
-    // 2. Large ZType Logo
+    // 2. ZType logo
     gx_bind_title();
-    gx_draw_sprite((SCREEN_W - 380) / 2, 85, 380, 170,
+    gx_draw_sprite((GAME_W - 384.0f) / 2.0f, logoY, 384.0f, 172.0f,
                    TITLE_LOGO_U0, TITLE_LOGO_V0,
                    TITLE_LOGO_U1, TITLE_LOGO_V1,
-                   0xFFFFFFFF);
+                   (0xFFFFFF00) | ta);
 
-    // 3. Hovering Player Ship with thruster
-    float shipY = 275.0f + sinf(frameCount * 0.06f) * 5.0f;
-    for (int i = 0; i < 6; i++) {
-        float ey = (i * 12 + frameCount * 2) % 50;
-        float alpha = 1.0f - (ey / 50.0f);
+    // 3. Exhaust puffs
+    float t_sec = bg_stars_scroll * (60.0f / 10.0f) / 60.0f;
+    for (int i = 0; i < 10; i++) {
+        float ey = fmodf(i * 139.0f + t_sec * 53.0f * (1.0f + i / 30.0f), 400.0f);
+        float a = (ey < 20.0f ? (ey / 20.0f) * 0.7f : (0.7f - ey / 400.0f > 0.0f ? 0.7f - ey / 400.0f : 0.0f)) * 0.3f;
         gx_bind_sprites();
-        gx_draw_sprite(SCREEN_W / 2 - 8, shipY + 28 + ey, 16, 20,
+        gx_draw_sprite(227.5f + sinf(t_sec + ey / 30.0f) * 0.7f, player_y + ey, 23.0f, 32.0f,
                        SPRITE_EXHAUST_U0, SPRITE_EXHAUST_V0,
                        SPRITE_EXHAUST_U1, SPRITE_EXHAUST_V1,
-                       (0x4DFED200) | (u8)(alpha * 180));
+                       (0x4DFED200) | (u8)(a * 255.0f));
     }
 
+    // 4. Ship
     gx_bind_title();
-    gx_draw_sprite(SCREEN_W / 2 - 16, shipY - 10, 32, 42,
+    gx_draw_sprite(227.5f, player_y - 7.0f, 23.0f, 297.0f,
                    TITLE_SHIP_U0, TITLE_SHIP_V0,
                    TITLE_SHIP_U1, TITLE_SHIP_V1,
                    0xFFFFFFFF);
 
     gx_set_blend_alpha();
 
-    // 4. Menu & prompt text
-    float pulse = (sinf(frameCount * 0.1f) * 0.3f + 0.7f);
-    u8 pulseAlpha = (u8)(pulse * 255.0f);
-    gx_draw_text_ui_center(SCREEN_W / 2, 345, "NEW GAME", FONT_UI_36_WHITE, 0xFFFFFFFF);
-    gx_draw_text_ui_center(SCREEN_W / 2, 395, "PRESS ENTER TO PLAY", FONT_UI_18_WHITE,
-                           (0x4DFED200) | pulseAlpha);
-
-    gx_draw_text_ui_center(SCREEN_W / 2, 422, "SPACE FOR EMP   -   TAB TO MUTE",
-                           FONT_UI_18_WHITE, 0x8899AACC);
-
-    if (hiscore > 0) {
-        char buf[64];
-        snprintf(buf, sizeof(buf), "HIGH SCORE: %06d", hiscore);
-        gx_draw_text_ui_center(SCREEN_W / 2, 445, buf, FONT_UI_18_WHITE, 0xFFAA33FF);
-    }
+    // 5. "new game"
+    gx_draw_text_ui_center(GAME_W / 2, newGameY, "new game", FONT_UI_36_ORANGE,
+                           (0xFFFFFF00) | ta);
 }
 
-static void drawGameOver(void) {
-    drawBackground();
+static void renderGameOver(void) {
+    renderBackground();
 
-    // "GAME OVER" title
-    gx_draw_text_ui_center(SCREEN_W / 2, 60, "GAME OVER", FONT_UI_36_BLUE, 0xFFFFFFFF);
+    float ys = 25.0f;
+    float totalKeys = (float)(hits + misses);
+    float acc = (totalKeys > 0.0f) ? (hits / totalKeys * 100.0f) : 0.0f;
 
-    // Blue divider bar
+    // Two-column layout matching Dominic Szablewski's MenuGameOver
+    gx_draw_text_ui(24.0f, ys + 0.0f, "FINAL SCORE", FONT_UI_18_WHITE, 0xFFFFFF80);
+    gx_draw_text_ui(252.0f, ys + 0.0f, "YOU REACHED", FONT_UI_18_WHITE, 0xFFFFFF80);
+
+    char sbuf[32];
+    snprintf(sbuf, sizeof(sbuf), "%06d", score);
+    gx_draw_text_ui(24.0f, ys + 25.0f, sbuf, FONT_UI_36_BLUE, 0xFFFFFFFF);
+
+    char wbuf[32];
+    snprintf(wbuf, sizeof(wbuf), "WAVE %03d", wave);
+    gx_draw_text_ui(252.0f, ys + 25.0f, wbuf, FONT_UI_36_BLUE, 0xFFFFFFFF);
+
+    // Separator bar 1
     gx_bind_sprites();
-    gx_draw_sprite((SCREEN_W - 360) / 2, 105, 360, 3,
+    gx_draw_sprite(24.0f, ys + 70.0f, 432.0f, 2.0f,
                    SPRITE_BAR_BLUE_U0, SPRITE_BAR_BLUE_V0,
                    SPRITE_BAR_BLUE_U1, SPRITE_BAR_BLUE_V1,
                    0x4DFED2FF);
 
-    char buf[64];
-    int totalKeys = keysHit + keysMiss;
-    int acc = totalKeys ? (keysHit * 100 / totalKeys) : 0;
-    int wpm = (frameCount > 0) ? (int)(keysHit / 5.0f / (frameCount / 3600.0f)) : 0;
+    gx_draw_text_ui(24.0f, ys + 140.0f, "ACCURACY", FONT_UI_18_WHITE, 0xFFFFFF80);
+    gx_draw_text_ui(252.0f, ys + 140.0f, "LONGEST STREAK", FONT_UI_18_WHITE, 0xFFFFFF80);
 
-    snprintf(buf, sizeof(buf), "SCORE: %06d", score);
-    gx_draw_text_ui_center(SCREEN_W / 2, 130, buf, FONT_UI_18_WHITE, 0xFFFFFFFF);
+    char abuf[32];
+    snprintf(abuf, sizeof(abuf), "%.1f%%", acc);
+    gx_draw_text_ui(24.0f, ys + 165.0f, abuf, FONT_UI_36_BLUE, 0xFFFFFFFF);
 
-    snprintf(buf, sizeof(buf), "WAVE REACHED: %d", wave);
-    gx_draw_text_ui_center(SCREEN_W / 2, 160, buf, FONT_UI_18_WHITE, 0x4DFED2FF);
+    char lbuf[32];
+    snprintf(lbuf, sizeof(lbuf), "%d", longestStreak);
+    gx_draw_text_ui(252.0f, ys + 165.0f, lbuf, FONT_UI_36_BLUE, 0xFFFFFFFF);
 
-    snprintf(buf, sizeof(buf), "WORDS DESTROYED: %d", wordsKilled);
-    gx_draw_text_ui_center(SCREEN_W / 2, 190, buf, FONT_UI_18_WHITE, 0xFFFFFFFF);
+    // Separator bar 2
+    gx_bind_sprites();
+    gx_draw_sprite(24.0f, ys + 210.0f, 432.0f, 2.0f,
+                   SPRITE_BAR_BLUE_U0, SPRITE_BAR_BLUE_V0,
+                   SPRITE_BAR_BLUE_U1, SPRITE_BAR_BLUE_V1,
+                   0x4DFED2FF);
 
-    snprintf(buf, sizeof(buf), "ACCURACY: %d%%", acc);
-    gx_draw_text_ui_center(SCREEN_W / 2, 220, buf, FONT_UI_18_WHITE, 0xFFFFFFFF);
-
-    snprintf(buf, sizeof(buf), "TYPING SPEED: %d WPM", wpm);
-    gx_draw_text_ui_center(SCREEN_W / 2, 250, buf, FONT_UI_18_WHITE, 0xFFFFFFFF);
-
-    snprintf(buf, sizeof(buf), "LONGEST STREAK: %d", bestStreak);
-    gx_draw_text_ui_center(SCREEN_W / 2, 280, buf, FONT_UI_18_WHITE, 0xFFFFFFFF);
-
-    snprintf(buf, sizeof(buf), "ALL-TIME BEST: %06d", hiscore);
-    gx_draw_text_ui_center(SCREEN_W / 2, 315, buf, FONT_UI_18_WHITE, 0xFFAA33FF);
-
-    if (newHighScore) {
-        gx_draw_text_ui_center(SCREEN_W / 2, 345, "NEW PERSONAL BEST!", FONT_UI_18_WHITE, 0x4DFED2FF);
+    // Personal best badge
+    if (isPersonalBest) {
+        gx_bind_sprites();
+        gx_draw_sprite(24.0f, ys + 250.0f, 27.0f, 31.0f,
+                       SPRITE_PERSONAL_BEST_U0, SPRITE_PERSONAL_BEST_V0,
+                       SPRITE_PERSONAL_BEST_U1, SPRITE_PERSONAL_BEST_V1,
+                       0xFFFFFFFF);
+        gx_draw_text_ui(60.0f, ys + 255.0f, "NEW PERSONAL BEST", FONT_UI_18_WHITE, 0xFFFFFFFF);
     }
 
-    float pulse = (sinf(frameCount * 0.1f) * 0.3f + 0.7f);
-    gx_draw_text_ui_center(SCREEN_W / 2, 395, "PRESS ENTER TO RETRY", FONT_UI_18_WHITE,
-                           (0xFFFFFF00) | (u8)(pulse * 255));
+    // "back to title"
+    gx_draw_text_ui_center(GAME_W / 2, 590.0f, "back to title", FONT_UI_36_ORANGE, 0xFFFFFFFF);
 }
 
-static void drawPauseScreen(void) {
-    drawBackground();
-    drawEnemies();
-    drawTargetReticle();
-    drawPlayer();
-    drawHUD();
+static void renderPause(void) {
+    renderBackground();
+    renderEnemies();
+    renderPlayer();
+    renderHUD();
 
-    // Dark tint
-    gx_draw_rect(0, 0, SCREEN_W, SCREEN_H, 0x000000AA);
-
-    gx_draw_text_ui_center(SCREEN_W / 2, 180, "PAUSED", FONT_UI_36_BLUE, 0xFFFFFFFF);
-    gx_draw_text_ui_center(SCREEN_W / 2, 240, "PRESS ENTER OR ESC TO RESUME",
-                           FONT_UI_18_WHITE, 0x4DFED2FF);
+    gx_draw_rect(0, 0, GAME_W, GAME_H, 0x000000B0);
+    gx_draw_text_ui_center(GAME_W / 2, 280.0f, "PAUSED", FONT_UI_36_BLUE, 0xFFFFFFFF);
+    gx_draw_text_ui_center(GAME_W / 2, 340.0f, "PRESS ENTER OR ESC TO RESUME", FONT_UI_18_WHITE, 0x4DFED2FF);
 }
 
 static void render(void) {
     gx_begin_frame();
 
-    if (state == STATE_TITLE) {
-        drawTitleScreen();
-    } else if (state == STATE_PLAY) {
-        drawBackground();
-        drawEnemies();
-        drawTargetReticle();
-        drawPlayer();
-        drawHUD();
-    } else if (state == STATE_PAUSE) {
-        drawPauseScreen();
-    } else if (state == STATE_OVER) {
-        drawGameOver();
-    }
+    // 1. Draw web page background and drop shadows in 640x480 screen viewport
+    gx_draw_page_backdrop();
 
-    if (!kbConnected && state != STATE_PLAY) {
-        gx_draw_text_ui_center(SCREEN_W / 2, SCREEN_H - 24, "KEYBOARD NOT DETECTED",
-                               FONT_UI_18_WHITE, 0xFF5555FF);
+    // 2. Set 480x720 centered canvas viewport and draw game
+    gx_set_canvas_viewport();
+
+    if (state == STATE_TITLE || state == STATE_INTRO_TRANSITION) {
+        renderTitle();
+    } else if (state == STATE_PLAY) {
+        renderBackground();
+        renderEnemies();
+        renderPlayer();
+        renderHUD();
+    } else if (state == STATE_PAUSE) {
+        renderPause();
+    } else if (state == STATE_OVER) {
+        renderGameOver();
     }
 
     gx_end_frame();
 }
 
 static void startPressed(void) {
-    if (state == STATE_TITLE || state == STATE_OVER) newGame();
-    else if (state == STATE_PAUSE) state = STATE_PLAY;
+    if (state == STATE_TITLE) {
+        setGame();
+    } else if (state == STATE_OVER) {
+        state = STATE_TITLE;
+        player_y = 400.0f;
+    } else if (state == STATE_PAUSE) {
+        state = STATE_PLAY;
+    }
 }
 
-/* ---------------- main ---------------- */
+/* ---------------- Main ---------------- */
 int main(int argc, char **argv) {
     WPAD_Init();
     KEYBOARD_Init(NULL);
@@ -1156,10 +1136,7 @@ int main(int argc, char **argv) {
 
         keyboard_event ke;
         while (KEYBOARD_GetEvent(&ke)) {
-            if (ke.type == KEYBOARD_CONNECTED) kbConnected = 1;
-            else if (ke.type == KEYBOARD_DISCONNECTED) kbConnected = 0;
-            else if (ke.type == KEYBOARD_PRESSED) {
-                kbConnected = 1;
+            if (ke.type == KEYBOARD_PRESSED) {
                 if (ke.symbol == KS_Return) {
                     if (state == STATE_TITLE || state == STATE_OVER) startPressed();
                     else if (state == STATE_PAUSE) state = STATE_PLAY;
