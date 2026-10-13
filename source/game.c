@@ -472,6 +472,7 @@ static void resetGame(void) {
 	pl1.x = NW * .5f - 6; pl1.y = 642; pl1.alive = 1; pl1.angle = pl1.targetAngle = 0; pl1.flashT = pl1.missT = 0;
 }
 static void setTitle(void) {
+	sound_music_stop(.3f);
 	resetGame();
 	mode = MODE_TITLE; menu = MENU_TITLE; cur = 0; emps = 0; menuT = 0; gameTrans = 0; overShown = 0;
 }
@@ -483,10 +484,12 @@ static void setGame(void) {
 	nextWave();
 	menu = MENU_TITLE;
 	sound_play(SFX_SPAWN);
+	sound_music_start();
 }
 
 static void gameOver(void) {
 	mode = MODE_OVER; overT = 0; overShown = 0;
+	sound_music_stop(1.f);
 	if (score > sv.best) { sv.best = score; isBest = 1; }
 	sv.games++;
 	if (wave > sv.bestWave) sv.bestWave = wave;

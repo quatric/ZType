@@ -5,7 +5,9 @@ A ZType-style typing shooter for Wii with USB keyboard support, laid out and sty
 starfield title screen with the big ZTYPE logo, grid-lit space background, word labels next to
 each ship, wave-clear banner, EMP, game-over stats and the settings/pause menu.
 Gameplay rules (waves, enemy types, scoring, streak multiplier, 3 EMPs) follow the original.
-All graphics and audio are generated in code (no copied assets); text uses Roboto (Apache 2.0).
+Graphics and sound effects are generated in code (no copied assets).
+- Fonts: run `tools/install_avenir.sh` (macOS) to build with Avenir like the original; the licensed font stays out of git, and without it the build falls back to Roboto (Apache 2.0) from `fonts/`
+- Music: put the soundtrack `.ogg` files (`endure.ogg`, `orientation.ogg`) in `sd:/apps/typeshot/music/`; they stream during a game. Without them a synthesized loop plays
 
 - Build: `make` (devkitPPC + libogc + libwiikeyboard)
 - Install: copy `apps/typeshot/` to `SD:/apps/` and launch from the Homebrew Channel, or `wiiload zType-wii.dol`

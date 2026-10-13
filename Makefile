@@ -33,13 +33,13 @@ LDFLAGS	=	-g $(MACHDEP) -Wl,-Map,$(notdir $@).map
 #---------------------------------------------------------------------------------
 # any extra libraries we wish to link with the project
 #---------------------------------------------------------------------------------
-LIBS	:=	-lfat -lwiikeyboard -lwiiuse -lbte -lasnd -logc -lm
+LIBS	:=	-lfat -lwiikeyboard -lwiiuse -lbte -lasnd -logc -lvorbisidec -logg -lm
 
 #---------------------------------------------------------------------------------
 # list of directories containing libraries, this must be the top level containing
 # include and lib
 #---------------------------------------------------------------------------------
-LIBDIRS	:=
+LIBDIRS	:=	$(DEVKITPRO)/portlibs/ppc
 
 #---------------------------------------------------------------------------------
 # no real need to edit anything past this point unless you need to add additional
@@ -49,6 +49,11 @@ ifneq ($(BUILD),$(notdir $(CURDIR)))
 #---------------------------------------------------------------------------------
 
 export OUTPUT	:=	$(CURDIR)/$(TARGET)
+
+# UI fonts: tools/install_avenir.sh installs Avenir; otherwise fall back to Roboto
+ifeq ($(wildcard $(CURDIR)/data/ui_font.ttf),)
+$(shell mkdir -p $(CURDIR)/data && cp $(CURDIR)/fonts/Roboto_Light.ttf $(CURDIR)/data/ui_font.ttf && cp $(CURDIR)/fonts/Roboto_Regular.ttf $(CURDIR)/data/word_font.ttf)
+endif
 
 export VPATH	:=	$(foreach dir,$(SOURCES),$(CURDIR)/$(dir)) \
 					$(foreach dir,$(DATA),$(CURDIR)/$(dir))

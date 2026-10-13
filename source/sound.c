@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "sound.h"
+#include "music.h"
 
 #define RATE 32000
 #define MUSIC_VOICE 0
@@ -13,6 +14,7 @@
 #define SFX_VOL 230
 
 static float sfxGain = .5f, musGain = .5f;
+static int streaming;
 static int vol(int base, float g) { int v = (int)(base * g * 2.f); return v > 255 ? 255 : v; }
 
 static s16 *sfx[SFX_COUNT];
@@ -186,7 +188,7 @@ void sound_init(void) {
 	mkSfx(SFX_LEVEL, 0.5f, gLevel);
 	mkSfx(SFX_OVER, 1.0f, gOver);
 	mkMusic();
-	musicStart();
+	music_init();
 }
 
 void sound_play(int id) {
@@ -205,5 +207,22 @@ int sound_muted(void) { return muted; }
 void sound_set_sfx_volume(float v) { sfxGain = v; }
 void sound_set_music_volume(float v) {
 	musGain = v;
+	if (streaming) return;
 	ASND_ChangeVolumeVoice(MUSIC_VOICE, muted ? 0 : vol(MUSIC_VOL, musGain), muted ? 0 : vol(MUSIC_VOL, musGain));
+}
+
+/* Music plays during a game only. The real soundtrack streams from the SD card when it is
+ * there; otherwise the synthesized loop is used. */
+#define OGG_VOL 170
+void sound_music_start(void) {
+	streaming = music_available();
+	if (streaming) music_start();
+	else musicStart();
+}
+void sound_music_stop(float fade) {
+	if (streaming) music_stop(fade);
+	else ASND_StopVoice(MUSIC_VOICE);
+}
+void sound_update(float dt) {
+	if (streaming) music_update(dt, muted ? 0 : vol(OGG_VOL, musGain));
 }

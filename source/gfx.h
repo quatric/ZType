@@ -2,13 +2,13 @@
 #define GFX_H
 #include <stdint.h>
 
-/* Screen buffer is 640x480; the ZType playfield is a 300x450 (2:3) column centred on it. */
+/* Screen buffer is 640x480; the ZType playfield is a 320x480 (2:3) column, full screen height, centred on it. */
 #define SW 640
 #define SH 480
-#define FX 170
-#define FY 2
-#define FW 300
-#define FH 450
+#define FX 160
+#define FY 0
+#define FW 320
+#define FH 480
 
 #define RGB(r,g,b) ((uint32_t)(((r)<<16)|((g)<<8)|(b)))
 #define CR(c) (((c)>>16)&255)
@@ -21,7 +21,7 @@ typedef struct Font Font;
 extern Font *fWord, *fMenu, *fTitle, *fSmall, *fTiny, *fMenuS;
 enum { AL_LEFT = 0, AL_CENTER = 1, AL_RIGHT = 2 };
 
-void gfx_init(const unsigned char *light, const unsigned char *regular, const unsigned char *medium);
+void gfx_init(const unsigned char *ui, const unsigned char *words);
 void gfx_clip(int x0, int y0, int x1, int y1);
 void gfx_noclip(void);
 

@@ -166,7 +166,7 @@ static Font *font_new(const unsigned char *ttf, float px) {
 	stbtt_fontinfo info;
 	Font *f = calloc(1, sizeof *f);
 	stbtt_InitFont(&info, ttf, stbtt_GetFontOffsetForIndex(ttf, 0));
-	float sc = stbtt_ScaleForPixelHeight(&info, px);
+	float sc = stbtt_ScaleForMappingEmToPixels(&info, px);
 	int asc, desc, gap;
 	stbtt_GetFontVMetrics(&info, &asc, &desc, &gap);
 	f->ascent = asc * sc; f->height = (asc - desc) * sc;
@@ -180,13 +180,14 @@ static Font *font_new(const unsigned char *ttf, float px) {
 	return f;
 }
 
-void gfx_init(const unsigned char *light, const unsigned char *regular, const unsigned char *medium) {
-	fWord = font_new(regular, 13.2f);
-	fMenu = font_new(light, 19.7f);
-	fMenuS = font_new(light, 16.f);
-	fTitle = font_new(medium, 17.8f);
-	fSmall = font_new(regular, 10.3f);
-	fTiny = font_new(regular, 8.5f);
+void gfx_init(const unsigned char *ui, const unsigned char *words) {
+	/* sizes follow the original's bitmap fonts: 22px words, 36px menu at 0.75, 36px titles, 18px small */
+	fWord = font_new(words, 14.7f);
+	fMenu = font_new(ui, 18.f);
+	fMenuS = font_new(ui, 16.f);
+	fTitle = font_new(ui, 24.f);
+	fSmall = font_new(ui, 12.f);
+	fTiny = font_new(ui, 9.f);
 }
 
 float text_w(Font *f, const char *s, float sp) {

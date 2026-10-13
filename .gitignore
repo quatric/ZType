@@ -4,3 +4,5 @@ build/
 *.map
 .codesight/
 .DS_Store
+data/*.ttf
+apps/typeshot/music/

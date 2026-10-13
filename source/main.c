@@ -9,9 +9,8 @@
 #include "gfx.h"
 #include "game.h"
 #include "sound.h"
-#include "Roboto_Light_ttf.h"
-#include "Roboto_Regular_ttf.h"
-#include "Roboto_Medium_ttf.h"
+#include "ui_font_ttf.h"
+#include "word_font_ttf.h"
 
 static void *xfb[2];
 static int fbi = 0;
@@ -75,7 +74,7 @@ int main(void) {
 	VIDEO_WaitVSync();
 	if (rmode->viTVMode & VI_NON_INTERLACE) VIDEO_WaitVSync();
 
-	gfx_init(Roboto_Light_ttf, Roboto_Regular_ttf, Roboto_Medium_ttf);
+	gfx_init(ui_font_ttf, word_font_ttf);
 	game_init(sdOK);
 	game_draw();
 	present(1);
@@ -125,6 +124,7 @@ int main(void) {
 #ifdef FPS_DEBUG
 		frame_t0 = now;
 #endif
+		sound_update(dt);
 		game_update(dt);
 		game_draw();
 #ifdef FPS_DEBUG
