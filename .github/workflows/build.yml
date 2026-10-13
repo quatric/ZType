@@ -1,0 +1,24 @@
+name: Build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: devkitpro/devkitppc:latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: make
+      - name: Package for Homebrew Channel
+        run: |
+          mkdir -p dist/apps/typeshot
+          cp zType-wii.dol dist/apps/typeshot/boot.dol
+          cp apps/typeshot/meta.xml dist/apps/typeshot/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: typeshot-wii
+          path: dist/
