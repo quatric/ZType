@@ -1,56 +1,89 @@
 # ZType (Wii)
 
-A port of Dominic Szablewski's [ZType](https://zty.pe/) typing shooter for Nintendo Wii with USB keyboard support. Built with hardware-accelerated GX rendering at 640x480 @ 60 FPS.
+A port of Dominic Szablewski's [ZType](https://zty.pe/) typing shooter for the Nintendo Wii, played with a USB keyboard. It is built to look like the website: the same title screen, menus, HUD, game over screen, credits, settings and stats card, drawn with the original artwork on the Wii's GX hardware at 640x480 (or 16:9 widescreen) and 60 FPS.
 
-## Features
+## What it looks like
 
-- **Authentic ZType Visuals**:
-  - Parallax scrolling starfield and deep atmospheric space gradient
-  - Glowing cyber grid that flashes upon enemy destruction
-  - Authentic ship designs: Player fighter, Missiles, rotating Mines, armored Destroyers, and massive Oppressor dreadnoughts
-  - Smooth vector typography using ZType's authentic Avenir fonts (untyped letters in crisp white, typed letters in vibrant orange)
-  - Zooming circular targeting lock-on reticle with laser targeting beam
-  - Radiant cyan plasma bolts, animated multi-frame explosions, and neon spark particles
-  - Authentic top HUD: streak multiplier bar with x2/x3 indicators, EMP stock counters, shield integrity, and wave clear banners
-  - Authentic title screen with the iconic ZType logo, hovering ship, and pulsing thruster flames
-  - Detailed Game Over statistics screen (Score, Wave, Words, Accuracy %, WPM, Longest Streak, High Score)
-- **Authentic Audio**:
-  - Sound effects from ZType (plasma shots, hits, misses, reticle target lock, small/medium/large explosions, EMP blast, wave spawn, streak multipliers)
-  - Looping electronic soundtrack with mute toggle
-- **Hardware-Accelerated GX Renderer**:
-  - Native 640x480 resolution at a locked 60 FPS
-  - Hardware bilinear texture filtering, alpha blending, and additive blending for brilliant neon glows
-- **Controls**:
-  - **USB Keyboard**:
-    - `A` - `Z`: Type letters to lock onto targets and shoot
-    - `Space` / `Enter`: Activate EMP shockwave (in game) / Start & retry (menus)
-    - `Escape`: Pause / Resume
-    - `Tab`: Toggle sound mute
-  - **Wii Remote**:
-    - `A`: Start game / confirm
-    - `B`: Activate EMP
-    - `+`: Pause / Resume
-    - `-`: Toggle sound mute
-    - `HOME`: Exit to Homebrew Channel
-- **Persistence**: High score automatically saved to SD card (`sd:/apps/typeshot/highscore.dat`)
-- **Homebrew Channel Ready**: App bundle in `apps/typeshot/` with custom `icon.png` and `meta.xml`
+The 480x720 game canvas of zty.pe sits in the middle of the page and the whole page is scaled to the TV, exactly like a 960x720 browser window shown on a 640x480 screen:
+
+- the tiled page background and the soft `box-shadow` around the canvas
+- the title screen with the PHOBOSLAB mark, the ZTYPE logo, the hovering ship with its exhaust, the menu entries, the info icon and the glitchy transition into a game
+- the game: scrolling stars, teal gradient, flashing grid, additive-blended sprites, the Avenir word labels, the targeting reticle, the EMP, the multiplier bar and the EMP counter, wave clear banners and screen shake
+- the settings / "game paused" menu with sound and music volume
+- the game over screen with your score, wave, accuracy, longest streak, the personal best badge and the graph of your last games
+- the credits and the "my stats" card
+
+Wide screen is detected from the Wii settings; on a 16:9 TV the page simply gets wider, the canvas keeps its shape.
+
+## Controls
+
+| | USB keyboard | Wii Remote |
+|---|---|---|
+| Shoot | type the letters of a word | - |
+| Cancel the current target | `Backspace` | `-` |
+| EMP | `Enter` | `B` |
+| Pause / settings | `Esc` | `+` |
+| Menus: move | arrow keys | D-pad |
+| Menus: select | `Enter` / `Space` | `A` |
+| Volume | left / right arrows | D-pad left / right |
+| Credits (on the title) | `I` | `1` |
+| Exit | - | `HOME` |
+
+The Wii Remote cannot type, so a keyboard is needed to actually play.
+
+## Own text, stats and settings
+
+Everything ZType keeps in the browser's `localStorage` is saved on the SD card in `sd:/apps/typeshot/`:
+
+- `stats.dat`: personal best, volumes and the history of your games (the "my stats" card and the graph on the game over screen)
+- `text.txt` (optional): put any text in this file and pick "load your own text"; the words of the text become the enemies, like the "load your own text" button of the website
+
+Without an SD card everything still works, nothing is saved.
 
 ## Building
 
-Requires devkitPPC and libogc:
+Requires devkitPPC and libogc (devkitPro):
 
 ```bash
+export DEVKITPRO=/opt/devkitpro DEVKITPPC=/opt/devkitpro/devkitPPC
 make
 ```
 
-Output binary: `ztype-wii.dol` (also copied to `apps/typeshot/boot.dol`).
+The output is `zType-wii.dol`. For the Homebrew Channel, copy it as `boot.dol` into a folder together with `apps/typeshot/icon.png` and `apps/typeshot/meta.xml` (the GitHub workflow packages it like that).
 
 ## Installation
 
-1. Copy the `apps/typeshot/` folder to the `apps/` directory on your SD card or USB drive (`SD:/apps/typeshot/`).
-2. Launch from the Homebrew Channel.
+1. Put `boot.dol`, `icon.png` and `meta.xml` into `apps/typeshot/` on your SD card or USB drive (`SD:/apps/typeshot/`).
+2. Launch it from the Homebrew Channel.
 3. Plug a standard USB keyboard into one of the Wii's rear USB ports.
 
+## Assets
+
+`tools/pack_assets.py` bakes the original media into GX textures (`data/*.bin`) and the headers that describe them (`source/assets.h`, `source/words.h`). It downloads the media it needs from `https://zty.pe/media/` into `zty_assets/` (not committed), so it needs Pillow and an internet connection:
+
+```bash
+python3 tools/pack_assets.py          # textures, headers, word lists
+python3 tools/pack_assets.py --sfx    # also re-encode the sound effects (needs ffmpeg)
+```
+
+The big static backgrounds (stars, gradient, grid) are baked at the size they are shown on a 640x480 frame, with full RGBA8 precision so the dark gradients do not band. The stats card uses Arimo (Apache License 2.0, `software/fonts/Arimo_Regular.ttf`), the open twin of the Arial that browsers use for `sans-serif`.
+
+ZType, its artwork, sounds and word lists belong to Dominic Szablewski ([phoboslab.org](https://phoboslab.org/)); this repository is a fan port.
+
+## Source layout
+
+| File | |
+|---|---|
+| `source/main.c` | setup, page background, input, frame loop |
+| `source/game.c` | the game: waves, enemies, targeting, plasma, explosions, EMP, HUD |
+| `source/menus.c` | title, settings, credits, game over, "my stats" |
+| `source/gx_render.c` | the canvas-2D-like layer on top of GX: transforms, alpha, additive blending, bitmap fonts |
+| `source/stats.c` | SD card storage |
+| `source/sound.c` | sound effects and music through ASND |
+
+## Testing in Dolphin
+
+`make EXTRA_CFLAGS="-DZT_TEST_SCRIPT -DZT_FORCE_43"` builds a scripted run (new game, an autopilot that types the words, pause, game over, credits, stats, settings; nothing is read from or written to the SD card) with a fixed 4:3 frame, for taking screenshots to compare against zty.pe.
 
 ## Software-renderer engine (`software/`)
 

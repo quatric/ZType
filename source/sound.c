@@ -22,15 +22,21 @@
 
 #define RATE 32000
 #define MUSIC_VOICE 0
-#define MUSIC_VOL 60
-#define SFX_VOL 240
+/* ASND voice volumes (0..255) at a setting of 100%; ZType starts at 50% */
+#define MUSIC_GAIN 120
+#define SFX_GAIN 480
 
 static const void *sfx_ptrs[SFX_MAX];
 static u32 sfx_sizes[SFX_MAX];
 
 static s16 *music;
 static int musicLen;
-static int muted = 0;
+static float sfxVolume = 0.5f, musicVolume = 0.5f;
+
+static int level(float gain, float v) {
+    int l = (int)(gain * v);
+    return l > 255 ? 255 : l < 0 ? 0 : l;
+}
 static int nextVoice = 1;
 
 static float midi(int n) { return 440.f * powf(2.f, (n - 69) / 12.f); }
@@ -86,7 +92,7 @@ static void musicLoop(s32 voice) {
 
 static void musicStart(void) {
     ASND_SetVoice(MUSIC_VOICE, VOICE_MONO_16BIT, RATE, 0, music, musicLen,
-                  muted ? 0 : MUSIC_VOL, muted ? 0 : MUSIC_VOL, musicLoop);
+                  level(MUSIC_GAIN, musicVolume), level(MUSIC_GAIN, musicVolume), musicLoop);
     ASND_AddVoice(MUSIC_VOICE, music, musicLen);
 }
 
@@ -120,18 +126,15 @@ void sound_init(void) {
 }
 
 void sound_play(int id) {
-    if (muted || id < 0 || id >= SFX_MAX || !sfx_ptrs[id]) return;
+    if (sfxVolume <= 0 || id < 0 || id >= SFX_MAX || !sfx_ptrs[id]) return;
     int v = nextVoice;
     nextVoice = (nextVoice >= 15) ? 1 : (nextVoice + 1);
     ASND_SetVoice(v, VOICE_MONO_16BIT, RATE, 0, (void*)sfx_ptrs[id], sfx_sizes[id],
-                  SFX_VOL, SFX_VOL, NULL);
+                  level(SFX_GAIN, sfxVolume), level(SFX_GAIN, sfxVolume), NULL);
 }
 
-void sound_toggle_mute(void) {
-    muted = !muted;
-    ASND_ChangeVolumeVoice(MUSIC_VOICE, muted ? 0 : MUSIC_VOL, muted ? 0 : MUSIC_VOL);
-}
-
-int sound_muted(void) {
-    return muted;
+void sound_set_volumes(float sound, float music) {
+    sfxVolume = sound;
+    musicVolume = music;
+    ASND_ChangeVolumeVoice(MUSIC_VOICE, level(MUSIC_GAIN, music), level(MUSIC_GAIN, music));
 }

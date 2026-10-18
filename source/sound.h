@@ -5,7 +5,6 @@
 
 void sound_init(void);
 void sound_play(int id);
-void sound_toggle_mute(void);
-int sound_muted(void);
+void sound_set_volumes(float sound, float music);   /* 0..1 each, like ig.soundManager.volume / ig.music.volume */
 
 #endif
