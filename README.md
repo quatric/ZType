@@ -4,6 +4,13 @@
 
 A port of Dominic Szablewski's [ZType](https://zty.pe/) typing shooter for the Nintendo Wii, played with a USB keyboard. It is built to look like the website: the same title screen, menus, HUD, game over screen, credits, settings and stats card, drawn with the original artwork on the Wii's GX hardware at 640x480 (or 16:9 widescreen) and 60 FPS.
 
+## Download
+
+Grab the latest build from the [latest release](../../releases/latest): `typeshot-wii.zip`. Every push to the main branch refreshes it, and tagged versions get their own entry on the [releases page](../../releases).
+
+1. Extract `typeshot-wii.zip` to the root of your SD card (or USB drive).
+2. Open ZType (Wii) from the Homebrew Channel.
+
 ## What it looks like
 
 The 480x720 game canvas of zty.pe sits in the middle of the page and the whole page is scaled to the TV, exactly like a 960x720 browser window shown on a 640x480 screen:
