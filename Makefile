@@ -43,10 +43,8 @@ LDFLAGS	=	-g $(MACHDEP) -Wl,-Map,$(notdir $@).map
 #---------------------------------------------------------------------------------
 # any extra libraries we wish to link with the project
 #---------------------------------------------------------------------------------
-LIBS	:=	-lfat -lwiikeyboard -lwiiuse -lbte -lasnd -logc -lm
-ifeq ($(ENGINE),soft)
+# both engines stream the soundtrack (Ogg Vorbis) from the SD card through libvorbisidec
 LIBS	:=	-lfat -lwiikeyboard -lwiiuse -lbte -lasnd -logc -lvorbisidec -logg -lm
-endif
 
 #---------------------------------------------------------------------------------
 # list of directories containing libraries, this must be the top level containing

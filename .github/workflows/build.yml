@@ -11,6 +11,8 @@ jobs:
     container: devkitpro/devkitppc:latest
     steps:
       - uses: actions/checkout@v4
+      - name: Install the Ogg Vorbis libraries (music streaming)
+        run: dkp-pacman -Sy --noconfirm --needed ppc-libogg ppc-libvorbisidec
       - name: Build
         run: make
       - name: Package for Homebrew Channel

@@ -58,6 +58,21 @@ static void draw_page(void) {
     menu_draw_overlay();
 }
 
+/* ---------------------------------------------------------------- music */
+
+/* Like the website: a new game starts the next random track (ig.music.next()), it keeps playing
+ * through the pause menu and fades out when the game is over (ig.music.fadeOut(1)). */
+static void update_music(void) {
+    static int prev = -1;
+    if ((int)zg.mode != prev) {
+        if (zg.mode == MODE_GAME) sound_music_start();
+        else if (zg.mode == MODE_GAME_OVER) sound_music_stop(1.0f);
+        else if (prev == MODE_GAME) sound_music_stop(0.3f);   /* quit to the title from the pause menu */
+        prev = (int)zg.mode;
+    }
+    sound_update(zt_tick);
+}
+
 /* ---------------------------------------------------------------- input */
 
 static void poll_input(void) {
@@ -192,6 +207,7 @@ int main(int argc, char **argv) {
 
         if (menu_modal_open()) menu_update();
         else game_update();
+        update_music();
 
         gx_begin_frame();
         draw_page();
