@@ -49,7 +49,7 @@ export DEVKITPRO=/opt/devkitpro DEVKITPPC=/opt/devkitpro/devkitPPC
 make
 ```
 
-The output is `zType-wii.dol`. For the Homebrew Channel, copy it as `boot.dol` into a folder together with `apps/typeshot/icon.png` and `apps/typeshot/meta.xml` (the GitHub workflow packages it like that).
+The output is `zType-wii.dol` and `zType-wii-xz.dol`, the same program packed into a self-extracting `.dol` a fraction of the size. For the Homebrew Channel, copy the `-xz` one as `boot.dol` into a folder together with `apps/typeshot/icon.png` and `apps/typeshot/meta.xml` (the GitHub workflow packages it like that). The first build downloads and builds [dolxz](https://github.com/FIX94/dolxz), which needs a host C compiler and liblzma (Debian/Ubuntu: `apt-get install liblzma-dev pkg-config`; macOS: `brew install xz`). `make NO_DOLXZ=1` skips the compressed `.dol`.
 
 ## Installation
 
