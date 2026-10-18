@@ -1,7 +1,7 @@
 /* ZType for Wii - typing shooter for USB keyboards. Platform glue: video, input, timing. */
 #include <gccore.h>
 #include <wiiuse/wpad.h>
-#include <wiikeyboard/keyboard.h>
+#include <input_wii.h>
 #include <fat.h>
 #include <ogc/lwp_watchdog.h>
 #include <string.h>
@@ -58,8 +58,9 @@ static void present(int full) {
 
 int main(void) {
 	VIDEO_Init();
-	WPAD_Init();
-	KEYBOARD_Init(NULL);
+	/* Every controller as Wii Remote buttons; the keyboard types (no key-to-button map). */
+	INPUT_InitEx(INPUT_INIT_NO_POINTER | INPUT_INIT_NO_MOUSE);
+	INPUT_KeyboardMapClear();
 	sound_init();
 	int sdOK = fatInitDefault();
 	rmode = VIDEO_GetPreferredMode(NULL);
@@ -84,8 +85,8 @@ int main(void) {
 	u64 last = gettime();
 	int kbOn = 0;
 	while (!game_wants_quit()) {
-		WPAD_ScanPads();
-		u32 d = WPAD_ButtonsDown(0);
+		INPUT_Update();
+		u32 d = INPUT_ButtonsDown();
 		if (d & WPAD_BUTTON_HOME) break;
 		if (d & WPAD_BUTTON_UP) game_key(K_UP);
 		if (d & WPAD_BUTTON_DOWN) game_key(K_DOWN);
@@ -96,22 +97,19 @@ int main(void) {
 		if (d & WPAD_BUTTON_1) game_key(K_BACK);
 		if (d & WPAD_BUTTON_2) game_key(K_ABOUT);
 
-		keyboard_event ke;
-		while (KEYBOARD_GetEvent(&ke)) {
-			if (ke.type == KEYBOARD_CONNECTED) kbOn = 1;
-			else if (ke.type == KEYBOARD_DISCONNECTED) kbOn = 0;
-			else if (ke.type == KEYBOARD_PRESSED) {
-				kbOn = 1;
-				switch (ke.symbol) {
-				case KS_Return: game_key(K_OK); break;
-				case KS_Escape: game_key(K_MENU); break;
-				case KS_BackSpace: case KS_Delete: game_key(K_BACK); break;
-				case KS_Up: game_key(K_UP); break;
-				case KS_Down: game_key(K_DOWN); break;
-				case KS_Left: game_key(K_LEFT); break;
-				case KS_Right: game_key(K_RIGHT); break;
-				default: if (ke.symbol > 32 && ke.symbol < 127) game_char((char)ke.symbol); break;
-				}
+		kbOn = INPUT_KeyboardConnected();
+		input_key_event ke;
+		while (INPUT_KeyPop(&ke)) {
+			kbOn = 1;
+			switch (ke.code) {
+			case 0x28: game_key(K_OK); break;               /* Enter */
+			case 0x29: game_key(K_MENU); break;             /* Escape */
+			case 0x2A: case 0x4C: game_key(K_BACK); break;  /* Backspace, Delete */
+			case 0x52: game_key(K_UP); break;
+			case 0x51: game_key(K_DOWN); break;
+			case 0x50: game_key(K_LEFT); break;
+			case 0x4F: game_key(K_RIGHT); break;
+			default: if (ke.ch > 32 && ke.ch < 127) game_char(ke.ch); break;
 			}
 		}
 		game_set_keyboard(kbOn);
@@ -136,6 +134,6 @@ int main(void) {
 #endif
 		present(0);
 	}
-	KEYBOARD_Deinit();
+	INPUT_Shutdown();
 	return 0;
 }

@@ -3,12 +3,12 @@
  *
  * The game itself (game.c), the menus (menus.c) and the GX canvas renderer (gx_render.c) all work in
  * the 480x720 canvas of zty.pe. This file lays that canvas out in the page, draws the page behind
- * it and turns keyboard / Wii remote input into the one-frame flags of ig.input.
+ * it and turns keyboard / controller input (via libinput-wii) into the one-frame flags of ig.input.
  */
 #include <gccore.h>
 #include <ogc/lwp_watchdog.h>
 #include <wiiuse/wpad.h>
-#include <wiikeyboard/keyboard.h>
+#include <input_wii.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -64,8 +64,8 @@ static void poll_input(void) {
     memset(&zt_in, 0, sizeof(zt_in));
     zt_in.mouse_x = zt_in.mouse_y = -1;
 
-    WPAD_ScanPads();
-    u32 d = WPAD_ButtonsDown(0);
+    INPUT_Update();
+    u32 d = INPUT_ButtonsDown();
     if (d & WPAD_BUTTON_HOME) quit = 1;
     if (d & WPAD_BUTTON_A) zt_in.ok = 1;
     if (d & WPAD_BUTTON_B) zt_in.enter = 1;
@@ -77,22 +77,21 @@ static void poll_input(void) {
     if (d & WPAD_BUTTON_LEFT) zt_in.left = 1;
     if (d & WPAD_BUTTON_RIGHT) zt_in.right = 1;
 
-    keyboard_event ke;
-    while (KEYBOARD_GetEvent(&ke)) {
-        if (ke.type != KEYBOARD_PRESSED) continue;
-        switch (ke.symbol) {
-        case KS_Return:
-        case KS_KP_Enter: zt_in.ok = 1; zt_in.enter = 1; break;
-        case KS_space: zt_in.ok = 1; break;
-        case KS_Escape: zt_in.menu = 1; break;
-        case KS_BackSpace: zt_in.back = 1; break;
-        case KS_Up: zt_in.up = 1; break;
-        case KS_Down: zt_in.down = 1; break;
-        case KS_Left: zt_in.left = 1; break;
-        case KS_Right: zt_in.right = 1; break;
+    input_key_event ke;
+    while (INPUT_KeyPop(&ke)) {
+        switch (ke.code) {
+        case 0x28: /* Enter */
+        case 0x58: zt_in.ok = 1; zt_in.enter = 1; break; /* keypad Enter */
+        case 0x2C: zt_in.ok = 1; break;                  /* Space */
+        case 0x29: zt_in.menu = 1; break;                /* Escape */
+        case 0x2A: zt_in.back = 1; break;                /* Backspace */
+        case 0x52: zt_in.up = 1; break;
+        case 0x51: zt_in.down = 1; break;
+        case 0x50: zt_in.left = 1; break;
+        case 0x4F: zt_in.right = 1; break;
         default:
-            if (ke.symbol == 'i' || ke.symbol == 'I') zt_in.info = 1;
-            if (ke.symbol > 32 && ke.symbol < 127) game_key_letter((char)ke.symbol);
+            if (ke.ch == 'i' || ke.ch == 'I') zt_in.info = 1;
+            if (ke.ch > 32 && ke.ch < 127) game_key_letter(ke.ch);
             break;
         }
     }
@@ -156,8 +155,9 @@ static void run_script(void) {
 
 int main(int argc, char **argv) {
     (void)argc; (void)argv;
-    WPAD_Init();
-    KEYBOARD_Init(NULL);
+    /* Every controller as Wii Remote buttons; the keyboard types (no key-to-button map). */
+    INPUT_InitEx(INPUT_INIT_NO_POINTER | INPUT_INIT_NO_MOUSE);
+    INPUT_KeyboardMapClear();
     SYS_SetResetCallback(on_reset);
     SYS_SetPowerCallback(on_power);
 
@@ -198,6 +198,6 @@ int main(int argc, char **argv) {
         gx_end_frame();
     }
 
-    KEYBOARD_Deinit();
+    INPUT_Shutdown();
     return 0;
 }
