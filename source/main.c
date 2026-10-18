@@ -9,6 +9,7 @@
 #include <ogc/lwp_watchdog.h>
 #include <wiiuse/wpad.h>
 #include <input_wii.h>
+#include <wiiupdate.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -41,6 +42,36 @@ static void draw_canvas_shadow(float cx) {
     }
 }
 
+/* ---------------------------------------------------------------- update popup */
+
+static wiiupdate_popup upd;
+static int upd_open;
+
+static void draw_update_popup(void) {
+    float pw = (float)gx_page_width(), w = 600, h = upd.progress >= 0 || upd.detail[0] ? 210 : 176;
+    float x = (pw - w) / 2, y = (PAGE_H - h) / 2;
+    gx_save();
+    gx_alpha(0.6f);
+    gx_fill(0, 0, pw, PAGE_H, 0x000000);
+    gx_alpha(0.95f);
+    gx_fill(x, y, w, h, 0x0f2a33);
+    gx_alpha(1);
+    gx_fill(x, y, w, 3, 0x6fd3d3);
+    sans_text(30, upd.title, pw / 2, y + 44, ALIGN_CENTER, 0xffffff);
+    sans_text(18, upd.text, pw / 2, y + 92, ALIGN_CENTER, 0xd8e8e8);
+    float row = y + 128;
+    if (upd.progress >= 0) {
+        gx_fill(x + 60, row, w - 120, 12, 0x2a4a52);
+        gx_fill(x + 60, row, (w - 120) * upd.progress / 100.0f, 12, 0x6fd3d3);
+        row += 36;
+    } else if (upd.detail[0]) {
+        sans_text(18, upd.detail, pw / 2, row, ALIGN_CENTER, 0x6fd3d3);
+        row += 36;
+    }
+    sans_text(18, upd.hint, pw / 2, row + 4, ALIGN_CENTER, 0xa0b8b8);
+    gx_restore();
+}
+
 static void draw_page(void) {
     int pw = gx_page_width();
     gx_image_tiled(TEX_PAGE, 0, 0, (float)pw, PAGE_H, 512, 512, 0, 0);
@@ -56,6 +87,7 @@ static void draw_page(void) {
     gx_clip_canvas(0);
 
     menu_draw_overlay();
+    if (upd_open) draw_update_popup();
 }
 
 /* ---------------------------------------------------------------- input */
@@ -91,7 +123,7 @@ static void poll_input(void) {
         case 0x4F: zt_in.right = 1; break;
         default:
             if (ke.ch == 'i' || ke.ch == 'I') zt_in.info = 1;
-            if (ke.ch > 32 && ke.ch < 127) game_key_letter(ke.ch);
+            if (ke.ch > 32 && ke.ch < 127 && !upd_open) game_key_letter(ke.ch);
             break;
         }
     }
@@ -154,7 +186,6 @@ static void run_script(void) {
 /* ---------------------------------------------------------------- main */
 
 int main(int argc, char **argv) {
-    (void)argc; (void)argv;
     /* Every controller as Wii Remote buttons; the keyboard types (no key-to-button map). */
     INPUT_InitEx(INPUT_INIT_NO_POINTER | INPUT_INIT_NO_MOUSE);
     INPUT_KeyboardMapClear();
@@ -173,6 +204,8 @@ int main(int argc, char **argv) {
     srand((unsigned)SYS_Time());
 #endif
     game_init();
+    WIIUPDATE_SetAppPath(argc > 0 ? argv[0] : NULL);
+    WIIUPDATE_Start("quatric", "zType-wii", APP_VERSION);
 
     u64 last = gettime();
     while (!quit) {
@@ -184,6 +217,20 @@ int main(int argc, char **argv) {
         zt_time += dt;
 
         poll_input();
+        {
+            /* The update popup has the controls while it is up (Enter = A, Escape = B too). */
+            u32 pd = INPUT_ButtonsDown();
+            if (zt_in.ok) pd |= WPAD_BUTTON_A;
+            if (zt_in.menu) pd |= WPAD_BUTTON_B;
+            int was_open = upd_open;
+            int ust = WIIUPDATE_Popup(pd, &upd);
+            if (ust == WIIUPDATE_POPUP_EXIT) quit = 1;
+            upd_open = ust == WIIUPDATE_POPUP_OPEN;
+            if (upd_open || was_open) {
+                memset(&zt_in, 0, sizeof(zt_in));
+                zt_in.mouse_x = zt_in.mouse_y = -1;
+            }
+        }
 #ifdef ZT_TEST_SCRIPT
         run_script();
 #endif
