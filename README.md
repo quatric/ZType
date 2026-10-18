@@ -1,6 +1,6 @@
 # ZType (Wii)
 
-**Version:** 1.2 · **Coder:** quatric
+**Version:** 1.3.0 · **Coder:** quatric
 
 A port of Dominic Szablewski's [ZType](https://zty.pe/) typing shooter for the Nintendo Wii, played with a USB keyboard. It is built to look like the website: the same title screen, menus, HUD, game over screen, credits, settings and stats card, drawn with the original artwork on the Wii's GX hardware at 640x480 (or 16:9 widescreen) and 60 FPS.
 
