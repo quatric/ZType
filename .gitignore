@@ -9,3 +9,4 @@ software/data/*.ttf
 apps/typeshot/music/
 build*/
 .DS_Store
+.dolxz/
