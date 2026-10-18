@@ -9,7 +9,7 @@ Run from the repository root:
 
 Needs Pillow. Missing media is downloaded from https://zty.pe/media/ into zty_assets/.
 """
-import os, sys, subprocess, urllib.request
+import os, shutil, sys, subprocess, urllib.request
 from PIL import Image, ImageDraw, ImageFont
 
 MEDIA = 'https://zty.pe/media/'
@@ -31,6 +31,7 @@ ASSETS = [
     'sounds/explosion-player.ogg', 'sounds/explosion-small.ogg', 'sounds/explosion.ogg',
     'sounds/hit.ogg', 'sounds/multi-2.ogg', 'sounds/multi-3.ogg', 'sounds/plasma.ogg',
     'sounds/spawn.ogg', 'sounds/target.ogg',
+    'music/endure.ogg', 'music/orientation.ogg',
 ]
 SANS_FONT = 'software/fonts/Arimo_Regular.ttf'   # Arimo (Apache 2.0), metric twin of the Arial that the browser's sans-serif maps to
 
@@ -343,10 +344,14 @@ def main():
         print('Exporting SFX PCM...')
         for name, fname, dur in sfx_info:
             p = os.path.join('zty_assets/sounds', fname)
+            # ASND plays big-endian samples, like everything else on the Wii's PowerPC
             res = subprocess.run(['ffmpeg', '-y', '-i', p, '-t', str(dur), '-ar', '32000', '-ac', '1',
-                                  '-f', 's16le', 'pipe:1'], capture_output=True)
+                                  '-f', 's16be', 'pipe:1'], capture_output=True)
             with open(f'data/sfx_{name}.bin', 'wb') as f:
                 f.write(res.stdout)
+    # The two soundtracks are linked in as they are and decoded while they play (source/music.c)
+    for name in ('endure', 'orientation'):
+        shutil.copyfile(f'zty_assets/music/{name}.ogg', f'data/music_{name}.ogg')
     hdr.append('enum {')
     for name, _, _ in sfx_info:
         hdr.append(f'    SFX_{name.upper()},')

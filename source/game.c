@@ -5,6 +5,7 @@
 #include "game.h"
 #include "menus.h"
 #include "stats.h"
+#include "music.h"
 #include "words.h"
 #include <string.h>
 #include <stdio.h>
@@ -961,6 +962,7 @@ static void game_set_game_state(void) {
     ents_push(p);
     zg.player = p;
     zg.mode = MODE_GAME;
+    music_next();
     sound_play(SFX_SPAWN);
     zg.emps = 3;
 }
@@ -980,6 +982,7 @@ void game_set_game_over(void) {
         stats_set_personal_best(zg.personalBest);
     }
     zg.mode = MODE_GAME_OVER;
+    music_fade_out(1);
 }
 
 void game_show_game_over(void) {

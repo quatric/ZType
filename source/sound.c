@@ -1,8 +1,6 @@
 #include <gccore.h>
 #include <asndlib.h>
 #include <malloc.h>
-#include <math.h>
-#include <stdlib.h>
 #include <string.h>
 #include "sound.h"
 
@@ -20,81 +18,22 @@
 #include "sfx_multi_3_bin.h"
 #include "sfx_cancel_bin.h"
 
+#include "music.h"
+
 #define RATE 32000
-#define MUSIC_VOICE 0
-/* ASND voice volumes (0..255) at a setting of 100%; ZType starts at 50% */
-#define MUSIC_GAIN 120
-#define SFX_GAIN 480
+/* the voice volume (0..255) at a setting of 100%: the samples as they are, like the website */
+#define SFX_GAIN 255
 
 static const void *sfx_ptrs[SFX_MAX];
 static u32 sfx_sizes[SFX_MAX];
 
-static s16 *music;
-static int musicLen;
-static float sfxVolume = 0.5f, musicVolume = 0.5f;
+static float sfxVolume = 0.5f;
 
 static int level(float gain, float v) {
-    int l = (int)(gain * v);
+    int l = (int)(gain * v + 0.5f);
     return l > 255 ? 255 : l < 0 ? 0 : l;
 }
 static int nextVoice = 1;
-
-static float midi(int n) { return 440.f * powf(2.f, (n - 69) / 12.f); }
-static float tri(float ph) { float p = ph - floorf(ph); return 4.f * fabsf(p - 0.5f) - 1.f; }
-static float sq(float ph) { return (ph - floorf(ph)) < 0.5f ? 1.f : -1.f; }
-static unsigned nz = 1;
-static float noise(void) { nz = nz * 1664525u + 1013904223u; return ((nz >> 16) & 0x7fff) / 16384.f - 1.f; }
-
-static s16 *alloc_aligned(int n, int *outLen) {
-    int bytes = (n * 2 + 31) & ~31;
-    s16 *b = memalign(32, bytes);
-    memset(b, 0, bytes);
-    *outLen = bytes;
-    return b;
-}
-
-static void mkMusic(void) {
-    /* 8 bars at 120 bpm (2s per bar) = 16s loop */
-    static const int root[8] = {45, 41, 48, 43, 45, 41, 43, 40};
-    static const int chord[8][3] = {{0,3,7},{0,4,7},{0,4,7},{0,4,7},{0,3,7},{0,4,7},{0,4,7},{0,4,7}};
-    float beat = 0.25f;
-    int n = (int)(16.f * RATE);
-    music = alloc_aligned(n, &musicLen);
-    float pb = 0, pa = 0;
-    for (int i = 0; i < n; i++) {
-        float t = i / (float)RATE;
-        int bar = (int)(t / 2.f) % 8;
-        float inBar = t - bar * 2.f;
-        int step = (int)(inBar / beat);
-        float inStep = (inBar - step * beat) / beat;
-        pb += midi(root[bar]) / RATE;
-        float bass = tri(pb) * (1.f - inStep * 0.6f) * 0.55f;
-        int note = root[bar] + 24 + chord[bar][(step * 2 + (step / 4)) % 3];
-        pa += midi(note) / RATE;
-        float arp = sq(pa) * (1.f - inStep) * 0.18f;
-        float hat = (step & 1) ? noise() * (1.f - inStep) * (1.f - inStep) * 0.12f : 0.f;
-        float kick = 0;
-        if (!(step & 1) && inStep < 0.5f) {
-            kick = sinf(2 * 3.14159f * (60.f + 90.f * (0.5f - inStep)) * (inStep * beat)) * (1.f - inStep * 2.f) * 0.5f;
-        }
-        float v = bass + arp + hat + kick;
-        if (v > 1.f) v = 1.f;
-        if (v < -1.f) v = -1.f;
-        music[i] = (s16)(v * 14000);
-    }
-    music[n - 1] = 0;
-    DCFlushRange(music, musicLen);
-}
-
-static void musicLoop(s32 voice) {
-    ASND_AddVoice(voice, music, musicLen);
-}
-
-static void musicStart(void) {
-    ASND_SetVoice(MUSIC_VOICE, VOICE_MONO_16BIT, RATE, 0, music, musicLen,
-                  level(MUSIC_GAIN, musicVolume), level(MUSIC_GAIN, musicVolume), musicLoop);
-    ASND_AddVoice(MUSIC_VOICE, music, musicLen);
-}
 
 void sound_init(void) {
     AUDIO_Init(NULL);
@@ -121,8 +60,7 @@ void sound_init(void) {
         }
     }
 
-    mkMusic();
-    musicStart();
+    music_init();
 }
 
 void sound_play(int id) {
@@ -135,6 +73,5 @@ void sound_play(int id) {
 
 void sound_set_volumes(float sound, float music) {
     sfxVolume = sound;
-    musicVolume = music;
-    ASND_ChangeVolumeVoice(MUSIC_VOICE, level(MUSIC_GAIN, music), level(MUSIC_GAIN, music));
+    music_set_volume(music);
 }

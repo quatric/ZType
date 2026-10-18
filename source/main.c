@@ -10,6 +10,7 @@
 #include <wiiuse/wpad.h>
 #include <input_wii.h>
 #include <wiiupdate.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -18,6 +19,7 @@
 #include "menus.h"
 #include "stats.h"
 #include "sound.h"
+#include "music.h"
 
 double zt_time;
 float zt_tick;
@@ -237,11 +239,35 @@ int main(int argc, char **argv) {
         if (zt_in.enter) game_spawn_emp();
         if (zt_in.back) game_cancel_target();
 
+#ifdef ZT_SHOW_FPS
+        u64 p0 = gettime();
+#endif
         if (menu_modal_open()) menu_update();
         else game_update();
+        music_update(dt);
 
         gx_begin_frame();
+#ifdef ZT_SHOW_FPS
+        u64 p1 = gettime();
+#endif
         draw_page();
+#ifdef ZT_SHOW_FPS
+        {
+            static char fps[96];
+            static float acc; static int frames;
+            u64 p2 = gettime();
+            acc += dt; frames++;
+            if (acc >= 0.5f) {
+                snprintf(fps, sizeof fps, "%.1f fps  upd %.1f  draw %.1f ms", frames / acc,
+                         ticks_to_microsecs(p1 - p0) / 1000.0f, ticks_to_microsecs(p2 - p1) / 1000.0f);
+                acc = 0; frames = 0;
+            }
+            gx_save(); gx_alpha(1);
+            gx_fill(0, 0, 420, 36, 0x000000);
+            sans_text(28, fps, 8, 4, ALIGN_LEFT, 0xffff00);
+            gx_restore();
+        }
+#endif
         gx_end_frame();
     }
 

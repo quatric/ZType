@@ -64,7 +64,7 @@ The output is `zType-wii.dol` and `zType-wii-xz.dol`, the same program packed in
 `tools/pack_assets.py` bakes the original media into GX textures (`data/*.bin`) and the headers that describe them (`source/assets.h`, `source/words.h`). It downloads the media it needs from `https://zty.pe/media/` into `zty_assets/` (not committed), so it needs Pillow and an internet connection:
 
 ```bash
-python3 tools/pack_assets.py          # textures, headers, word lists
+python3 tools/pack_assets.py          # textures, headers, word lists, soundtrack
 python3 tools/pack_assets.py --sfx    # also re-encode the sound effects (needs ffmpeg)
 ```
 
@@ -81,7 +81,8 @@ ZType, its artwork, sounds and word lists belong to Dominic Szablewski ([phobosl
 | `source/menus.c` | title, settings, credits, game over, "my stats" |
 | `source/gx_render.c` | the canvas-2D-like layer on top of GX: transforms, alpha, additive blending, bitmap fonts |
 | `source/stats.c` | SD card storage |
-| `source/sound.c` | sound effects and music through ASND |
+| `source/sound.c` | sound effects through ASND |
+| `source/music.c` | the soundtrack: `endure.ogg` and `orientation.ogg`, linked in and decoded with Tremor while they play |
 
 ## Testing in Dolphin
 

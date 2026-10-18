@@ -46,7 +46,7 @@ LDFLAGS	=	-g $(MACHDEP) -Wl,-Map,$(notdir $@).map
 #---------------------------------------------------------------------------------
 # any extra libraries we wish to link with the project
 #---------------------------------------------------------------------------------
-LIBS	:=	-lfat -lwiikeyboard -lwiiuse -lbte -lasnd -logc -lm
+LIBS	:=	-lfat -lwiikeyboard -lwiiuse -lbte -lasnd -logc -lvorbisidec -logg -lm
 LIBS	:=	-lwiiupdate $(LIBS)
 ifeq ($(ENGINE),soft)
 LIBS	:=	-lfat -lwiikeyboard -lwiiuse -lbte -lasnd -logc -lvorbisidec -logg -lm
@@ -175,6 +175,11 @@ $(OFILES_SOURCES) : $(HFILES)
 # This rule links in binary data with the .bin extension
 #---------------------------------------------------------------------------------
 %.bin.o	%_bin.h :	%.bin
+#---------------------------------------------------------------------------------
+	@echo $(notdir $<)
+	$(bin2o)
+
+%.ogg.o	%_ogg.h :	%.ogg
 #---------------------------------------------------------------------------------
 	@echo $(notdir $<)
 	$(bin2o)
