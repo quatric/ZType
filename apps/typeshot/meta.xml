@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <app version="1">
   <name>ZType</name>
-  <version>1.1</version>
+  <version>1.2</version>
   <release_date>20261013</release_date>
   <short_description>ZType typing shooter for Wii</short_description>
   <long_description>A Wii port of ZType with USB keyboard support. Type falling words to shoot them down with plasma cannons and EMP shockwaves.</long_description>
