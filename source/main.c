@@ -3,7 +3,7 @@
  *
  * The game itself (game.c), the menus (menus.c) and the GX canvas renderer (gx_render.c) all work in
  * the 480x720 canvas of zty.pe. This file lays that canvas out in the page, draws the page behind
- * it and turns keyboard / controller input (via libinput-wii) into the one-frame flags of ig.input.
+ * it and turns keyboard / controller input (via libwiiinput) into the one-frame flags of ig.input.
  */
 #include <gccore.h>
 #include <ogc/lwp_watchdog.h>

@@ -21,12 +21,12 @@ ENGINE		?=	gx
 ifeq ($(ENGINE),soft)
 TARGET		:=	$(notdir $(CURDIR))-soft
 BUILD		:=	build-soft
-SOURCES		:=	software/source libinput-wii/source
+SOURCES		:=	software/source libwiiinput/source
 DATA		:=	software/data
 else
 TARGET		:=	$(notdir $(CURDIR))
 BUILD		:=	build
-SOURCES		:=	source libinput-wii/source
+SOURCES		:=	source libwiiinput/source
 DATA		:=	data
 endif
 INCLUDES	:=
@@ -57,7 +57,7 @@ endif
 # list of directories containing libraries, this must be the top level containing
 # include and lib
 #---------------------------------------------------------------------------------
-LIBDIRS	:=	$(DEVKITPRO)/portlibs/ppc $(CURDIR)/libinput-wii
+LIBDIRS	:=	$(DEVKITPRO)/portlibs/ppc $(CURDIR)/libwiiinput
 LIBDIRS	+=	$(CURDIR)/libwiiupdate
 
 #---------------------------------------------------------------------------------
